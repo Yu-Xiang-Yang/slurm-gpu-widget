@@ -1,0 +1,9 @@
+gpu|RUNNING|alice
+gpu|RUNNING|testuser
+gpu|PENDING|bob
+gpu-v100|RUNNING|carol
+gpu-v100|PENDING|testuser
+gpu-v100|PENDING|dave
+cpu|RUNNING|erin
+cpu|RUNNING|erin
+cpu|PENDING|frank

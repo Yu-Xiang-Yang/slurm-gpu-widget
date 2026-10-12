@@ -1,0 +1,31 @@
+# 复制到 ~/.config/cluster-widget/config 后修改（install.sh 会自动复制一份）
+# Copy to ~/.config/cluster-widget/config and edit (install.sh does this for you)
+
+# 集群名，显示在组件标题和菜单栏上；留空显示 "GPU 队列"
+# Cluster name shown in the widget title and menu bar; empty = default title
+CLUSTER_NAME=""
+
+# Tunnelblick 里显示的配置名；留空则不检测 VPN，直接 ssh
+# Tunnelblick configuration name; empty = skip VPN detection and ssh directly
+TB_CONFIG="my-vpn"
+
+# ssh 目标，推荐填 ~/.ssh/config 里的 Host 别名（HostName/User/IdentityFile/ProxyJump 写在那里）
+# ssh target, preferably a Host alias defined in ~/.ssh/config
+SSH_HOST="cluster"
+
+# VPN 未连接时是否自动让 Tunnelblick 连接（1=是，0=否）
+# Auto-connect Tunnelblick when the VPN is down (1=yes, 0=no)
+AUTO_CONNECT=1
+CONNECT_TIMEOUT=30
+
+# 只显示这些分区，逗号分隔；留空显示全部
+# Comma-separated partitions to display; empty = all
+PARTITIONS=""
+
+# 1=只显示有 GPU 的分区（不显示 CPU）；0=CPU 和 GPU 都显示
+# 1 = GPU partitions only; 0 = show CPU and GPU
+GPU_ONLY=1
+
+# 1=在每个分区下列出节点名及其 GPU/CPU 占用；0=只显示分区汇总
+# 1 = list node names with per-node GPU/CPU usage under each partition; 0 = summary only
+SHOW_NODES=0
