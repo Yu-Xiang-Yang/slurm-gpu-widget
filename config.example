@@ -33,3 +33,14 @@ SHOW_NODES=0
 # 界面语言：zh=中文，en=English，auto=跟随系统语言
 # Interface language: zh, en, or auto (follow the macOS language)
 UI_LANG="auto"
+
+# 各分区 GPU 型号标注（Slurm 的 Gres 未写型号时手动填写），分号分隔
+# Per-partition GPU model label (for clusters whose Gres carries no type), semicolon-separated
+GPU_MODELS=""   # e.g. "gpu=NVIDIA A100 80GB;compute2=NVIDIA V100 32GB"
+
+# 1=经登录节点并行 ssh 到各 GPU 节点执行 nvidia-smi，显示每张卡的型号、显存占用和利用率
+#   需要登录节点能免密 ssh 到计算节点；启用 pam_slurm_adopt 的集群仅允许登录有作业的节点
+# 1 = query nvidia-smi on each GPU node (parallel ssh from the login node) for per-GPU model, memory and utilisation
+#   requires password-less ssh from the login node to compute nodes (pam_slurm_adopt restricts this to nodes running your jobs)
+GPU_DETAIL=0
+GPU_DETAIL_TIMEOUT=6

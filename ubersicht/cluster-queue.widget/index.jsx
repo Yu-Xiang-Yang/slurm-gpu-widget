@@ -20,7 +20,7 @@ const posCss = saved ? `left: ${saved.x}px; top: ${saved.y}px;` : "top: 40px; ri
 
 export const className = `
   ${posCss}
-  width: 300px;
+  width: 340px;
   padding: 14px 16px;
   border-radius: 14px;
   background: rgba(28, 28, 30, 0.72);
@@ -70,12 +70,12 @@ const STR = {
   zh: {
     free: "空闲", run: "运行", pend: "排队", me: "我", maxfree: "单节点最多空闲", cards: "卡", mig: "个 MIG 实例",
     nodes: "节点", idle: "空闲", down: "不可用", nodata: "脚本没有返回数据", drag: "拖动移动位置，双击恢复默认",
-    title: "GPU 队列", clickConnect: "点击连接 VPN", connected: "已连接", updated: "更新于",
+    model: "型号", mem: "内存", title: "GPU 队列", clickConnect: "点击连接 VPN", connected: "已连接", updated: "更新于",
   },
   en: {
     free: "free", run: "running", pend: "pending", me: "mine", maxfree: "Max free on one node:", cards: "GPUs", mig: "MIG instances",
     nodes: "nodes", idle: "idle", down: "down", nodata: "The script returned no data", drag: "Drag to move, double-click to reset",
-    title: "GPU Queues", clickConnect: "Click to connect VPN", connected: "connected", updated: "Updated",
+    model: "Model", mem: "RAM", title: "GPU Queues", clickConnect: "Click to connect VPN", connected: "connected", updated: "Updated",
   },
 };
 let T = STR[(typeof navigator !== "undefined" && /^zh/.test(navigator.language)) ? "zh" : "en"];
@@ -83,7 +83,9 @@ let T = STR[(typeof navigator !== "undefined" && /^zh/.test(navigator.language))
 const pct = (u, t) => (t > 0 ? Math.round((u * 100) / t) : 0);
 const color = (p) => (p >= 90 ? "#ff453a" : p >= 60 ? "#ffd60a" : "#30d158");
 
-const Bar = ({ label, used, total }) => {
+const gb = (mb) => Math.round(mb / 1024);
+
+const Bar = ({ label, used, total, unit }) => {
   const p = pct(used, total);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "3px 0" }}>
@@ -92,7 +94,7 @@ const Bar = ({ label, used, total }) => {
         <div style={{ width: `${p}%`, height: "100%", borderRadius: 3, background: color(p) }} />
       </div>
       <span style={{ width: 92, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-        {T.free} {total - used}/{total}
+        {unit === "G" ? `${gb(used)}/${gb(total)}G` : `${T.free} ${total - used}/${total}`}
       </span>
     </div>
   );
@@ -102,12 +104,28 @@ const Bar = ({ label, used, total }) => {
 const stateColor = (st) =>
   /down|drain|fail|maint|not_responding/.test(st) ? "#ff453a" : st === "idle" ? "#30d158" : "#ffd60a";
 
+// 单张卡（配置 GPU_DETAIL=1 且节点允许 ssh 执行 nvidia-smi 时才有）
+const GpuRow = ({ g }) => (
+  <div style={{ display: "flex", gap: 6, fontSize: 10, opacity: 0.7, paddingLeft: 14, fontVariantNumeric: "tabular-nums" }}>
+    <span style={{ width: 30 }}>GPU{g.index}</span>
+    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
+    <span>{(g.mem_used / 1024).toFixed(1)}/{Math.round(g.mem_total / 1024)}G</span>
+    <span style={{ width: 32, textAlign: "right", color: color(g.util) }}>{g.util}%</span>
+  </div>
+);
+
 const NodeRow = ({ n }) => (
-  <div style={{ display: "flex", gap: 6, fontSize: 11, fontVariantNumeric: "tabular-nums", opacity: 0.85 }}>
-    <span style={{ color: stateColor(n.state) }}>●</span>
-    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.name}</span>
-    {n.gpu_total > 0 && <span>GPU {n.gpu_used}/{n.gpu_total}</span>}
-    <span style={{ width: 78, textAlign: "right", opacity: 0.7 }}>CPU {n.cpu_used}/{n.cpu_total}</span>
+  <div>
+    <div style={{ display: "flex", gap: 6, fontSize: 11, fontVariantNumeric: "tabular-nums", opacity: 0.85 }}>
+      <span style={{ color: stateColor(n.state) }}>●</span>
+      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.name}</span>
+      {n.gpu_total > 0 && <span>GPU {n.gpu_used}/{n.gpu_total}</span>}
+      <span style={{ width: 64, textAlign: "right", opacity: 0.7, whiteSpace: "nowrap" }}>CPU {n.cpu_used}/{n.cpu_total}</span>
+      {n.mem_total > 0 && (
+        <span style={{ width: 88, textAlign: "right", opacity: 0.7, whiteSpace: "nowrap" }}>{T.mem} {gb(n.mem_used)}/{gb(n.mem_total)}G</span>
+      )}
+    </div>
+    {(n.gpus || []).map((g) => <GpuRow key={g.index} g={g} />)}
   </div>
 );
 
@@ -120,8 +138,10 @@ const Partition = ({ p, gpuOnly }) => (
         {p.mine > 0 ? ` · ${T.me} ${p.mine}` : ""}
       </span>
     </div>
+    {p.model && <div style={{ fontSize: 11, opacity: 0.7, marginTop: 1 }}>{T.model}: {p.model}</div>}
     {p.gpu_total > 0 && <Bar label="GPU" used={p.gpu_used} total={p.gpu_total} />}
     {!gpuOnly && <Bar label="CPU" used={p.cpu_used} total={p.cpu_total} />}
+    {p.mem_total > 0 && <Bar label={T.mem} used={p.mem_used} total={p.mem_total} unit="G" />}
     <div style={{ opacity: 0.5, fontSize: 11 }}>
       {p.gpu_total > 0 ? `${T.maxfree} ${p.gpu_max_free_node} ${p.mig ? T.mig : T.cards} · ` : ""}
       {T.nodes} {p.nodes} · {T.idle} {p.idle_nodes}

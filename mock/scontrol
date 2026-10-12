@@ -1,7 +1,7 @@
-NodeName=gpu01 Arch=x86_64 CoresPerSocket=32 CPUAlloc=48 CPUEfctv=64 CPUTot=64 CPULoad=40.1 AvailableFeatures=a100 Gres=gpu:a100:8(S:0-1) NodeAddr=gpu01 State=MIXED ThreadsPerCore=1 Partitions=gpu,all AllocTRES=cpu=48,mem=400G,gres/gpu=6,gres/gpu:a100=6 Reason=None
-NodeName=gpu02 Arch=x86_64 CPUAlloc=0 CPUTot=64 Gres=gpu:a100:8(S:0-1) State=IDLE Partitions=gpu,all AllocTRES= 
-NodeName=gpu03 Arch=x86_64 CPUAlloc=0 CPUTot=64 Gres=gpu:a100:8(S:0-1) State=DOWN+DRAIN Partitions=gpu,all AllocTRES= Reason=bad gpu [root@2026-10-01]
-NodeName=gpu04 Arch=x86_64 CPUAlloc=32 CPUTot=32 Gres=gpu:v100:4 State=ALLOCATED Partitions=gpu-v100,all AllocTRES=cpu=32,gres/gpu=4
-NodeName=cpu01 Arch=x86_64 CPUAlloc=128 CPUTot=128 Gres=(null) State=ALLOCATED Partitions=cpu,all AllocTRES=cpu=128,mem=500G
-NodeName=cpu02 Arch=x86_64 CPUAlloc=40 CPUTot=128 Gres=(null) State=MIXED Partitions=cpu,all AllocTRES=cpu=40
-NodeName=cpu03 Arch=x86_64 CPUAlloc=0 CPUTot=128 Gres=(null) State=IDLE Partitions=cpu,all AllocTRES=
+NodeName=gpu01 Arch=x86_64 CoresPerSocket=32 CPUAlloc=48 CPUEfctv=64 CPUTot=64 CPULoad=40.1 AvailableFeatures=a100 Gres=gpu:a100:8(S:0-1) NodeAddr=gpu01 RealMemory=1024000 FreeMem=612000 State=MIXED ThreadsPerCore=1 Partitions=gpu,all AllocTRES=cpu=48,mem=400G,gres/gpu=6,gres/gpu:a100=6 Reason=None
+NodeName=gpu02 Arch=x86_64 CPUAlloc=0 CPUTot=64 Gres=gpu:a100:8(S:0-1) RealMemory=1024000 FreeMem=612000 State=IDLE Partitions=gpu,all AllocTRES= 
+NodeName=gpu03 Arch=x86_64 CPUAlloc=0 CPUTot=64 Gres=gpu:a100:8(S:0-1) RealMemory=1024000 FreeMem=612000 State=DOWN+DRAIN Partitions=gpu,all AllocTRES= Reason=bad gpu [root@2026-10-01]
+NodeName=gpu04 Arch=x86_64 CPUAlloc=32 CPUTot=32 Gres=gpu:v100:4 RealMemory=512000 FreeMem=300000 State=ALLOCATED Partitions=gpu-v100,all AllocTRES=cpu=32,gres/gpu=4
+NodeName=cpu01 Arch=x86_64 CPUAlloc=128 CPUTot=128 Gres=(null) RealMemory=256000 FreeMem=128000 State=ALLOCATED Partitions=cpu,all AllocTRES=cpu=128,mem=500G
+NodeName=cpu02 Arch=x86_64 CPUAlloc=40 CPUTot=128 Gres=(null) RealMemory=256000 FreeMem=128000 State=MIXED Partitions=cpu,all AllocTRES=cpu=40
+NodeName=cpu03 Arch=x86_64 CPUAlloc=0 CPUTot=128 Gres=(null) RealMemory=256000 FreeMem=128000 State=IDLE Partitions=cpu,all AllocTRES=

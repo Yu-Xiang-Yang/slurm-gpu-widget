@@ -13,6 +13,7 @@ A macOS desktop widget and menu-bar plugin that reports the per-partition (queue
 - **Per-partition aggregation**: allocated/total GPUs (from `Gres` and `AllocTRES`), allocated/total CPUs, idle and unavailable nodes, running and pending jobs, and the jobs of the current user.
 - **MIG awareness**: partitions backed by MIG-partitioned GPUs (e.g. `gpu:2g.20gb:12`) are labelled, and their capacity is reported in MIG instances rather than physical cards.
 - **Configurable cluster name** (`CLUSTER_NAME`), displayed in the widget title and the menu bar.
+- **Memory and GPU model**: per-partition and per-node host memory (`RealMemory − FreeMem`), a configurable GPU model label (`GPU_MODELS`), and optional per-GPU model, memory usage and utilisation from `nvidia-smi` (`GPU_DETAIL=1`).
 - **Optional node list** (`SHOW_NODES=1`): node names with state and per-node GPU/CPU usage under each partition (a submenu in SwiftBar).
 - **Bilingual interface** (`UI_LANG`): Chinese or English labels in both front ends, selected explicitly or from the macOS language.
 - **Draggable desktop card**: the Übersicht card can be repositioned by dragging its title; the position persists across refreshes, and a double-click restores the default location.
@@ -69,6 +70,9 @@ File: `~/.config/cluster-widget/config` (template: [`config.example`](config.exa
 | `PARTITIONS` | *(empty)* | Comma-separated whitelist of partitions; empty displays all. |
 | `GPU_ONLY` | `1` | `1` displays GPU partitions only; `0` adds CPU partitions and CPU bars. |
 | `SHOW_NODES` | `0` | `1` lists node names with state and per-node usage under each partition. |
+| `GPU_MODELS` | *(empty)* | GPU model label per partition, e.g. `gpu=NVIDIA A100 80GB;compute2=NVIDIA V100 32GB`; needed when `Gres` carries no type. When empty and `GPU_DETAIL=1` succeeds, the model reported by `nvidia-smi` is used. |
+| `GPU_DETAIL` | `0` | `1` runs `nvidia-smi` on every GPU node of the displayed partitions (parallel SSH from the login node) and lists each GPU with model, memory used/total and utilisation. |
+| `GPU_DETAIL_TIMEOUT` | `6` | Per-node timeout (s) for the `nvidia-smi` query. |
 | `UI_LANG` | `auto` | Interface language: `zh`, `en`, or `auto` (Chinese when the primary macOS language is Chinese, otherwise English). |
 
 Example: a temporary view of all partitions with node details, independent of the configuration file:
@@ -92,12 +96,15 @@ For large partitions (≈ 100 nodes) `SHOW_NODES=1` should be combined with `PAR
     "name": "gpu", "nodes": 3, "idle_nodes": 1, "down_nodes": 1,
     "cpu_used": 48, "cpu_total": 128, "gpu_used": 6, "gpu_total": 16,
     "gpu_max_free_node": 8, "running": 2, "pending": 1, "mine": 0, "mig": false,
-    "node_list": [{"name": "gpu01", "state": "mixed", "cpu_used": 48, "cpu_total": 64, "gpu_used": 6, "gpu_total": 8}]
+    "model": "NVIDIA A100-SXM4-80GB", "mem_used": 1236992, "mem_total": 3072000,
+    "node_list": [{"name": "gpu01", "state": "mixed", "cpu_used": 48, "cpu_total": 64, "gpu_used": 6, "gpu_total": 8,
+                   "mem_used": 412000, "mem_total": 1024000,
+                   "gpus": [{"index": 0, "name": "NVIDIA A100-SXM4-80GB", "mem_used": 61234, "mem_total": 81920, "util": 97}]}]
   }]
 }
 ```
 
-`node_list` is present only when `SHOW_NODES=1`. `gpu_max_free_node` denotes the largest number of free GPUs (or MIG instances) on a single node, which bounds the largest single-node job that can start immediately.
+`node_list` is present only when `SHOW_NODES=1`; `gpus` is non-empty only when `GPU_DETAIL=1` and the node accepted the query. Memory values are in MiB; host memory usage is computed as `RealMemory − FreeMem`, because `AllocMem` remains 0 on clusters that do not schedule memory. `gpu_max_free_node` denotes the largest number of free GPUs (or MIG instances) on a single node, which bounds the largest single-node job that can start immediately.
 
 `--swiftbar` emits the SwiftBar plugin format, and `--connect` only triggers the Tunnelblick connection.
 
@@ -114,7 +121,8 @@ MOCK_DIR=mock SHOW_NODES=1 CLUSTER_NAME=Demo bash cluster-status.sh --swiftbar
 
 1. VPN state: `osascript -e 'tell application "Tunnelblick" to get state of first configuration where name = "…"'`.
 2. Data acquisition: `ssh -o BatchMode=yes $SSH_HOST "scontrol show node -o; squeue -h -o '%P|%T|%u'"`.
-3. Aggregation (local `awk`): `CPUAlloc/CPUTot` for CPUs; the GPU total is derived from `Gres` (e.g. `gpu:a100:8(S:0-1)`, `gpu:4`, `gpu:2g.20gb:12,gpu:1g.20gb:4`), and the allocated count from `gres/gpu=N` in `AllocTRES` (absent when zero). The `Partitions` field is split on commas, so a node contributes to each partition it belongs to.
+3. Optional GPU detail (`GPU_DETAIL=1`): the login node runs `nvidia-smi --query-gpu=index,name,memory.used,memory.total,utilization.gpu` on all GPU nodes in parallel, each bounded by `GPU_DETAIL_TIMEOUT`. On clusters with `pam_slurm_adopt`, only nodes on which the user has a running job accept the connection; the remaining nodes fall back to the Slurm-derived figures.
+4. Aggregation (local `awk`): `CPUAlloc/CPUTot` for CPUs; the GPU total is derived from `Gres` (e.g. `gpu:a100:8(S:0-1)`, `gpu:4`, `gpu:2g.20gb:12,gpu:1g.20gb:4`), and the allocated count from `gres/gpu=N` in `AllocTRES` (absent when zero). The `Partitions` field is split on commas, so a node contributes to each partition it belongs to.
 
 ## Troubleshooting
 
