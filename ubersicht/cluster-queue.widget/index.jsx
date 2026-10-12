@@ -65,6 +65,21 @@ const resetPos = (e) => {
   box.style.right = "24px";
 };
 
+// 界面文字：语言由脚本输出的 lang 字段决定（配置项 UI_LANG）
+const STR = {
+  zh: {
+    free: "空闲", run: "运行", pend: "排队", me: "我", maxfree: "单节点最多空闲", cards: "卡", mig: "个 MIG 实例",
+    nodes: "节点", idle: "空闲", down: "不可用", nodata: "脚本没有返回数据", drag: "拖动移动位置，双击恢复默认",
+    title: "GPU 队列", clickConnect: "点击连接 VPN", connected: "已连接", updated: "更新于",
+  },
+  en: {
+    free: "free", run: "running", pend: "pending", me: "mine", maxfree: "Max free on one node:", cards: "GPUs", mig: "MIG instances",
+    nodes: "nodes", idle: "idle", down: "down", nodata: "The script returned no data", drag: "Drag to move, double-click to reset",
+    title: "GPU Queues", clickConnect: "Click to connect VPN", connected: "connected", updated: "Updated",
+  },
+};
+let T = STR[(typeof navigator !== "undefined" && /^zh/.test(navigator.language)) ? "zh" : "en"];
+
 const pct = (u, t) => (t > 0 ? Math.round((u * 100) / t) : 0);
 const color = (p) => (p >= 90 ? "#ff453a" : p >= 60 ? "#ffd60a" : "#30d158");
 
@@ -77,7 +92,7 @@ const Bar = ({ label, used, total }) => {
         <div style={{ width: `${p}%`, height: "100%", borderRadius: 3, background: color(p) }} />
       </div>
       <span style={{ width: 92, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-        空闲 {total - used}/{total}
+        {T.free} {total - used}/{total}
       </span>
     </div>
   );
@@ -101,16 +116,16 @@ const Partition = ({ p, gpuOnly }) => (
     <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600 }}>
       <span>{p.name}{p.mig ? " (MIG)" : ""}</span>
       <span style={{ fontWeight: 400, opacity: 0.8 }}>
-        运行 {p.running} · 排队 {p.pending}
-        {p.mine > 0 ? ` · 我 ${p.mine}` : ""}
+        {T.run} {p.running} · {T.pend} {p.pending}
+        {p.mine > 0 ? ` · ${T.me} ${p.mine}` : ""}
       </span>
     </div>
     {p.gpu_total > 0 && <Bar label="GPU" used={p.gpu_used} total={p.gpu_total} />}
     {!gpuOnly && <Bar label="CPU" used={p.cpu_used} total={p.cpu_total} />}
     <div style={{ opacity: 0.5, fontSize: 11 }}>
-      {p.gpu_total > 0 ? `单节点最多空闲 ${p.gpu_max_free_node} ${p.mig ? "个 MIG 实例" : "卡"} · ` : ""}
-      节点 {p.nodes} · 空闲 {p.idle_nodes}
-      {p.down_nodes > 0 ? ` · 不可用 ${p.down_nodes}` : ""}
+      {p.gpu_total > 0 ? `${T.maxfree} ${p.gpu_max_free_node} ${p.mig ? T.mig : T.cards} · ` : ""}
+      {T.nodes} {p.nodes} · {T.idle} {p.idle_nodes}
+      {p.down_nodes > 0 ? ` · ${T.down} ${p.down_nodes}` : ""}
     </div>
     {p.node_list && (
       <div style={{ marginTop: 4, paddingLeft: 4 }}>
@@ -126,8 +141,9 @@ export const render = ({ output, error }) => {
     d = JSON.parse(output);
   } catch (e) {}
 
+  if (d && STR[d.lang]) T = STR[d.lang];
   if (!d) {
-    return <div data-drag-root onMouseDown={startDrag} onDoubleClick={resetPos} style={{ cursor: "move" }}>⚠︎ 脚本没有返回数据<br /><small>{String(error || output || "").slice(0, 200)}</small></div>;
+    return <div data-drag-root onMouseDown={startDrag} onDoubleClick={resetPos} style={{ cursor: "move" }}>⚠︎ {T.nodata}<br /><small>{String(error || output || "").slice(0, 200)}</small></div>;
   }
 
   const ok = d.vpn === "CONNECTED";
@@ -137,25 +153,25 @@ export const render = ({ output, error }) => {
         <span
           onMouseDown={startDrag}
           onDoubleClick={resetPos}
-          title="拖动移动位置，双击恢复默认"
+          title={T.drag}
           style={{ fontSize: 14, fontWeight: 700, cursor: "move", flex: 1, userSelect: "none" }}
         >
-          {d.cluster || "GPU 队列"}
+          {d.cluster || T.title}
           {d.gpu_total > 0 && (
-            <span style={{ marginLeft: 8, fontWeight: 400, opacity: 0.8 }}>空闲 {d.gpu_total - d.gpu_used}/{d.gpu_total}</span>
+            <span style={{ marginLeft: 8, fontWeight: 400, opacity: 0.8 }}>{T.free} {d.gpu_total - d.gpu_used}/{d.gpu_total}</span>
           )}
         </span>
         <span
           onClick={() => !ok && run(`${SCRIPT} --connect`)}
           style={{ cursor: ok ? "default" : "pointer", color: ok ? "#30d158" : "#ff453a" }}
-          title={ok ? "" : "点击连接 VPN"}
+          title={ok ? "" : T.clickConnect}
         >
-          ● VPN {ok ? "已连接" : d.vpn}
+          ● VPN {ok ? T.connected : d.vpn}
         </span>
       </div>
       {d.error && <div style={{ marginTop: 8, color: "#ff9f0a" }}>{d.error}</div>}
       {d.partitions.map((p) => <Partition key={p.name} p={p} gpuOnly={d.gpu_only} />)}
-      <div style={{ marginTop: 10, opacity: 0.4, fontSize: 10, textAlign: "right" }}>更新于 {d.time}</div>
+      <div style={{ marginTop: 10, opacity: 0.4, fontSize: 10, textAlign: "right" }}>{T.updated} {d.time}</div>
     </div>
   );
 };

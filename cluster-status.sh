@@ -12,7 +12,7 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PAT
 
 CONF="${CLUSTER_WIDGET_CONF:-$HOME/.config/cluster-widget/config}"
 # 命令行上的环境变量优先于配置文件
-_ENV_OVERRIDES="$(env | grep -E '^(TB_CONFIG|SSH_HOST|AUTO_CONNECT|CONNECT_TIMEOUT|SSH_TIMEOUT|PARTITIONS|GPU_ONLY|CLUSTER_NAME|SHOW_NODES)=' | sed "s/'/'\\\\''/g; s/=\(.*\)/='\1'/")"
+_ENV_OVERRIDES="$(env | grep -E '^(TB_CONFIG|SSH_HOST|AUTO_CONNECT|CONNECT_TIMEOUT|SSH_TIMEOUT|PARTITIONS|GPU_ONLY|CLUSTER_NAME|SHOW_NODES|UI_LANG)=' | sed "s/'/'\\\\''/g; s/=\(.*\)/='\1'/")"
 # shellcheck disable=SC1090
 [ -f "$CONF" ] && . "$CONF"
 eval "$_ENV_OVERRIDES"
@@ -21,6 +21,14 @@ TB_CONFIG="${TB_CONFIG:-}"              # Tunnelblick 里的配置名；留空�
 SSH_HOST="${SSH_HOST:-}"                # ssh 目标，建议写 ~/.ssh/config 里的 Host 别名
 CLUSTER_NAME="${CLUSTER_NAME:-}"        # 组件标题里显示的集群名；留空显示 "GPU 队列"
 SHOW_NODES="${SHOW_NODES:-0}"           # 1=在每个分区下列出节点名及其 GPU/CPU 占用
+UI_LANG="${UI_LANG:-auto}"              # 界面语言：zh / en / auto（跟随系统语言）
+if [ "$UI_LANG" = "auto" ]; then
+  case "$(defaults read -g AppleLanguages 2>/dev/null | sed -n '2p')" in
+    *zh*) UI_LANG="zh" ;;
+    *)    UI_LANG="en" ;;
+  esac
+fi
+[ "$UI_LANG" = "zh" ] || UI_LANG="en"
 AUTO_CONNECT="${AUTO_CONNECT:-1}"       # VPN 未连接时是否自动让 Tunnelblick 连接
 CONNECT_TIMEOUT="${CONNECT_TIMEOUT:-30}"
 SSH_TIMEOUT="${SSH_TIMEOUT:-8}"
@@ -78,7 +86,7 @@ fi
 RAW=""
 ERR=""
 if [ -z "$SSH_HOST" ] && [ -z "$MOCK_DIR" ]; then
-  ERR="未配置 SSH_HOST"
+  [ "$UI_LANG" = "zh" ] && ERR="未配置 SSH_HOST" || ERR="SSH_HOST is not configured"
 elif [ "$STATE" = "CONNECTED" ] || [ "$STATE" = "NO_CONFIG" ]; then
   # NO_CONFIG：没填 Tunnelblick 配置名时也尝试 ssh（可能本来就在内网）
   if [ -n "$MOCK_DIR" ]; then
@@ -88,12 +96,13 @@ elif [ "$STATE" = "CONNECTED" ] || [ "$STATE" = "NO_CONFIG" ]; then
       "scontrol show node -o 2>/dev/null; echo '@@SQUEUE'; squeue -h -o '%P|%T|%u' 2>/dev/null" 2>&1)"
     rc=$?
     if [ $rc -ne 0 ]; then
-      ERR="ssh 失败: $(printf '%s' "$RAW" | tail -1 | tr -d '"\\')"
+      [ "$UI_LANG" = "zh" ] && ERR="ssh 失败: " || ERR="ssh failed: "
+      ERR="$ERR$(printf '%s' "$RAW" | tail -1 | tr -d '"\\')"
       RAW=""
     fi
   fi
 else
-  ERR="VPN 未连接"
+  [ "$UI_LANG" = "zh" ] && ERR="VPN 未连接" || ERR="VPN not connected"
 fi
 
 NOW="$(date '+%H:%M:%S')"
@@ -105,7 +114,7 @@ export SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
 printf '%s\n' "$RAW" | awk -v mode="$MODE" -v vpn="$STATE" -v err="$ERR" -v now="$NOW" \
   -v filter="$PARTITIONS" -v gpuonly="$GPU_ONLY" -v me="${USER:-}" \
-  -v cluster="$CLUSTER_NAME" -v shownodes="$SHOW_NODES" '
+  -v cluster="$CLUSTER_NAME" -v shownodes="$SHOW_NODES" -v lang="$UI_LANG" '
 function val(line, key,    i, n, parts) {
   n = split(line, parts, " ")
   for (i = 1; i <= n; i++)
@@ -143,7 +152,22 @@ function bar(used, total,    w, k, s, i) {
   return s
 }
 
-BEGIN { sect = "node"; np = 0 }
+# 界面文字（SwiftBar 菜单）
+function i18n() {
+  if (lang == "zh") {
+    L["cluster"] = "集群"; L["gpufree"] = "GPU 空闲"; L["run"] = "运行"; L["pend"] = "排队"; L["mine"] = "我的"
+    L["free"] = "空闲"; L["maxfree"] = "单节点最多空闲"; L["cards"] = "卡"; L["mig"] = "个 MIG 实例"
+    L["nodes"] = "节点"; L["idle"] = "空闲"; L["down"] = "不可用"; L["updated"] = "更新于"
+    L["connect"] = "连接 VPN"; L["refresh"] = "刷新"
+  } else {
+    L["cluster"] = "Cluster"; L["gpufree"] = "GPU free"; L["run"] = "running"; L["pend"] = "pending"; L["mine"] = "mine"
+    L["free"] = "free"; L["maxfree"] = "Max free on one node:"; L["cards"] = "GPUs"; L["mig"] = "MIG instances"
+    L["nodes"] = "nodes"; L["idle"] = "idle"; L["down"] = "down"; L["updated"] = "Updated"
+    L["connect"] = "Connect VPN"; L["refresh"] = "Refresh"
+  }
+}
+
+BEGIN { sect = "node"; np = 0; i18n() }
 $0 == "@@SQUEUE" { sect = "q"; next }
 sect == "node" && /NodeName=/ {
   parts = val($0, "Partitions"); if (parts == "") next
@@ -185,7 +209,7 @@ END {
     np = k
   }
   if (mode == "json") {
-    printf "{\"cluster\":\"%s\",\"show_nodes\":%s,", jesc(cluster), (shownodes == "1" ? "true" : "false")
+    printf "{\"lang\":\"%s\",\"cluster\":\"%s\",\"show_nodes\":%s,", lang, jesc(cluster), (shownodes == "1" ? "true" : "false")
     printf "\"time\":\"%s\",\"vpn\":\"%s\",\"error\":\"%s\",\"gpu_only\":%s,\"gpu_used\":%d,\"gpu_total\":%d,\"partitions\":[", now, vpn, jesc(err), (gpuonly == "1" ? "true" : "false"), all_ga, all_gt
     for (i = 1; i <= np; i++) {
       p = order[i]
@@ -206,23 +230,23 @@ END {
   # SwiftBar：第一行显示在菜单栏，"---" 之后是下拉菜单
   free_g = all_gt - all_ga; tot_g = all_gt
   title = (cluster != "") ? cluster " " : ""
-  if (err != "") printf "⚠︎ %s | color=#d9534f\n", (cluster != "" ? cluster : "集群")
-  else if (tot_g > 0) printf "🟢 %sGPU 空闲 %d/%d\n", title, free_g, tot_g
-  else printf "🟢 %s\n", (cluster != "" ? cluster : "集群")
+  if (err != "") printf "⚠︎ %s | color=#d9534f\n", (cluster != "" ? cluster : L["cluster"])
+  else if (tot_g > 0) printf "🟢 %s%s %d/%d\n", title, L["gpufree"], free_g, tot_g
+  else printf "🟢 %s\n", (cluster != "" ? cluster : L["cluster"])
   print "---"
   printf "VPN: %s | color=%s\n", vpn, (vpn == "CONNECTED" ? "#3c9d5d" : "#d9534f")
   if (err != "") printf "%s | color=#d9534f\n", err
   for (i = 1; i <= np; i++) {
     p = order[i]
     print "---"
-    printf "%s%s  ·  运行 %d  排队 %d%s | font=Menlo-Bold\n", p, (mig[p] ? " (MIG)" : ""), run[p], pend[p], (mine[p] ? "  (我的 " mine[p] ")" : "")
+    printf "%s%s  ·  %s %d  %s %d%s | font=Menlo-Bold\n", p, (mig[p] ? " (MIG)" : ""), L["run"], run[p], L["pend"], pend[p], (mine[p] ? "  (" L["mine"] " " mine[p] ")" : "")
     if (gpu_t[p] > 0) {
-      printf "GPU %s %d/%d 空闲 %d | font=Menlo size=12\n", bar(gpu_a[p], gpu_t[p]), gpu_a[p], gpu_t[p], gpu_t[p] - gpu_a[p]
-      printf "单节点最多空闲 %d %s | font=Menlo size=12\n", maxfree[p], (mig[p] ? "个 MIG 实例" : "卡")
+      printf "GPU %s %d/%d %s %d | font=Menlo size=12\n", bar(gpu_a[p], gpu_t[p]), gpu_a[p], gpu_t[p], L["free"], gpu_t[p] - gpu_a[p]
+      printf "%s %d %s | font=Menlo size=12\n", L["maxfree"], maxfree[p], (mig[p] ? L["mig"] : L["cards"])
     }
     if (gpuonly != "1")
-      printf "CPU %s %d/%d 空闲 %d | font=Menlo size=12\n", bar(cpu_a[p], cpu_t[p]), cpu_a[p], cpu_t[p], cpu_t[p] - cpu_a[p]
-    printf "节点 %d  空闲 %d  不可用 %d | font=Menlo size=12 color=gray\n", nodes[p], idle[p], down[p]
+      printf "CPU %s %d/%d %s %d | font=Menlo size=12\n", bar(cpu_a[p], cpu_t[p]), cpu_a[p], cpu_t[p], L["free"], cpu_t[p] - cpu_a[p]
+    printf "%s %d  %s %d  %s %d | font=Menlo size=12 color=gray\n", L["nodes"], nodes[p], L["idle"], idle[p], L["down"], down[p]
     if (shownodes == "1")   # 子菜单：每个节点一行
       for (j = 1; j <= nodes[p]; j++) {
         if (ngt[p, j] > 0) printf "--%s  GPU %d/%d  CPU %d/%d  %s | font=Menlo size=12\n", nl[p, j], nga[p, j], ngt[p, j], nca[p, j], nct[p, j], ns[p, j]
@@ -230,7 +254,7 @@ END {
       }
   }
   print "---"
-  printf "更新于 %s | color=gray\n", now
-  print "连接 VPN | bash=\"" ENVIRON["SCRIPT_PATH"] "\" param1=--connect terminal=false refresh=true"
-  print "刷新 | refresh=true"
+  printf "%s %s | color=gray\n", L["updated"], now
+  print L["connect"] " | bash=\"" ENVIRON["SCRIPT_PATH"] "\" param1=--connect terminal=false refresh=true"
+  print L["refresh"] " | refresh=true"
 }'

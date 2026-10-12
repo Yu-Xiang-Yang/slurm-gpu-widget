@@ -29,3 +29,7 @@ GPU_ONLY=1
 # 1=在每个分区下列出节点名及其 GPU/CPU 占用；0=只显示分区汇总
 # 1 = list node names with per-node GPU/CPU usage under each partition; 0 = summary only
 SHOW_NODES=0
+
+# 界面语言：zh=中文，en=English，auto=跟随系统语言
+# Interface language: zh, en, or auto (follow the macOS language)
+UI_LANG="auto"

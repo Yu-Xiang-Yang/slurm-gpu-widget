@@ -14,6 +14,7 @@
 - **MIG 识别**：由 MIG 切分 GPU（如 `gpu:2g.20gb:12`）构成的分区带有 `(MIG)` 标注，容量以 MIG 实例数而非物理卡数计。
 - **可配置集群名**（`CLUSTER_NAME`），显示于组件标题与菜单栏。
 - **可选节点列表**（`SHOW_NODES=1`）：在每个分区下列出节点名、状态及单节点 GPU/CPU 占用（SwiftBar 中以子菜单呈现）。
+- **双语界面**（`UI_LANG`）：两种前端均支持中文或英文标签，可显式指定或跟随 macOS 系统语言。
 - **桌面卡片可拖动**：按住 Übersicht 卡片标题即可拖动，位置在刷新后保持不变；双击标题恢复默认位置。
 - 处于 `DOWN`、`DRAIN`、`FAIL`、`MAINT`、`NOT_RESPONDING` 状态的节点不计入可用容量；同属多个分区的节点在全局 GPU 总数中仅计一次。
 
@@ -68,6 +69,7 @@
 | `PARTITIONS` | （空） | 以逗号分隔的分区白名单；为空时显示全部分区。 |
 | `GPU_ONLY` | `1` | `1` 仅显示含 GPU 的分区；`0` 同时显示 CPU 分区及 CPU 进度条。 |
 | `SHOW_NODES` | `0` | `1` 在每个分区下列出节点名、状态及单节点占用。 |
+| `UI_LANG` | `auto` | 界面语言：`zh`、`en` 或 `auto`（系统首选语言为中文时显示中文，否则显示英文）。 |
 
 示例：不修改配置文件，临时查看全部分区及节点明细：
 
@@ -83,7 +85,7 @@ GPU_ONLY=0 SHOW_NODES=1 PARTITIONS=gpu,compute ~/.config/cluster-widget/cluster-
 
 ```json
 {
-  "cluster": "Demo", "show_nodes": true, "time": "13:58:32",
+  "lang": "zh", "cluster": "Demo", "show_nodes": true, "time": "13:58:32",
   "vpn": "CONNECTED", "error": "", "gpu_only": true,
   "gpu_used": 10, "gpu_total": 20,
   "partitions": [{

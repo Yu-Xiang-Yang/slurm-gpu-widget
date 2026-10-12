@@ -14,6 +14,7 @@ A macOS desktop widget and menu-bar plugin that reports the per-partition (queue
 - **MIG awareness**: partitions backed by MIG-partitioned GPUs (e.g. `gpu:2g.20gb:12`) are labelled, and their capacity is reported in MIG instances rather than physical cards.
 - **Configurable cluster name** (`CLUSTER_NAME`), displayed in the widget title and the menu bar.
 - **Optional node list** (`SHOW_NODES=1`): node names with state and per-node GPU/CPU usage under each partition (a submenu in SwiftBar).
+- **Bilingual interface** (`UI_LANG`): Chinese or English labels in both front ends, selected explicitly or from the macOS language.
 - **Draggable desktop card**: the Übersicht card can be repositioned by dragging its title; the position persists across refreshes, and a double-click restores the default location.
 - Nodes in `DOWN`, `DRAIN`, `FAIL`, `MAINT` or `NOT_RESPONDING` states are excluded from available capacity; nodes belonging to several partitions are counted once in the global GPU total.
 
@@ -22,7 +23,7 @@ A macOS desktop widget and menu-bar plugin that reports the per-partition (queue
 | Front end | Location | Installation |
 |---|---|---|
 | **Übersicht** | Translucent card on the desktop, one block per partition | `brew install --cask ubersicht` |
-| **SwiftBar** | Menu-bar item (e.g. `GPU 空闲 14/32`) with a per-partition dropdown | `brew install --cask swiftbar` |
+| **SwiftBar** | Menu-bar item (e.g. `GPU free 14/32`) with a per-partition dropdown | `brew install --cask swiftbar` |
 
 Both front ends invoke the same collector, `cluster-status.sh`; either or both may be installed.
 
@@ -68,6 +69,7 @@ File: `~/.config/cluster-widget/config` (template: [`config.example`](config.exa
 | `PARTITIONS` | *(empty)* | Comma-separated whitelist of partitions; empty displays all. |
 | `GPU_ONLY` | `1` | `1` displays GPU partitions only; `0` adds CPU partitions and CPU bars. |
 | `SHOW_NODES` | `0` | `1` lists node names with state and per-node usage under each partition. |
+| `UI_LANG` | `auto` | Interface language: `zh`, `en`, or `auto` (Chinese when the primary macOS language is Chinese, otherwise English). |
 
 Example: a temporary view of all partitions with node details, independent of the configuration file:
 
@@ -83,7 +85,7 @@ For large partitions (≈ 100 nodes) `SHOW_NODES=1` should be combined with `PAR
 
 ```json
 {
-  "cluster": "Demo", "show_nodes": true, "time": "13:58:32",
+  "lang": "en", "cluster": "Demo", "show_nodes": true, "time": "13:58:32",
   "vpn": "CONNECTED", "error": "", "gpu_only": true,
   "gpu_used": 10, "gpu_total": 20,
   "partitions": [{
@@ -120,16 +122,12 @@ MOCK_DIR=mock SHOW_NODES=1 CLUSTER_NAME=Demo bash cluster-status.sh --swiftbar
 |---|---|
 | `install.sh` reports neither front end | The application has never been launched; launch it once and re-run `install.sh`. |
 | Übersicht shows nothing on the desktop | The Übersicht rendering server (port 41416) did not start; quitting and reopening Übersicht restores it. `curl http://127.0.0.1:41416/` verifies the server. |
-| `ssh 失败` (ssh failed) | Key-based login is not configured, or the host alias is wrong; `ssh -o BatchMode=yes $SSH_HOST true` reproduces the error. |
+| `ssh failed` / `ssh 失败` | Key-based login is not configured, or the host alias is wrong; `ssh -o BatchMode=yes $SSH_HOST true` reproduces the error. |
 | VPN remains disconnected | Credentials are not in the Keychain, or the automation permission was denied (System Settings → Privacy & Security → Automation). |
 
 ## Other schedulers
 
 Only the remote command and the `awk` parser in `cluster-status.sh` are scheduler-specific (PBS: `pbsnodes -a` / `qstat`; LSF: `bhosts` / `bqueues`). The JSON schema and both front ends remain unchanged.
-
-## Note on the interface language
-
-The widget labels are currently in Simplified Chinese (e.g. `空闲` = free, `运行` = running, `排队` = pending, `节点` = nodes).
 
 ## License
 
