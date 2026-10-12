@@ -162,7 +162,10 @@ const Job = ({ j, epoch }) => (
         <span style={{ opacity: 0.5 }}> / {j.limit_s !== undefined ? fmtDur(j.limit_s) : j.limit}</span>
       </span>
     </div>
-    <div style={{ fontSize: 10, opacity: 0.5 }}>{j.partition} · {j.nodes}</div>
+    <div style={{ fontSize: 10, opacity: 0.5 }}>
+      {j.partition} · {j.nodes}
+      {/gpu[^,]*:(\d+)/.test(j.gres || "") ? ` · ${(j.gres.match(/gpu[^,]*:(\d+)/) || [])[1]} GPU` : ""}
+    </div>
     {j.gpus.map((g) => (
       <div key={g.index} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, fontVariantNumeric: "tabular-nums" }}>
         <span style={{ width: 34, opacity: 0.7 }}>GPU{g.index}</span>

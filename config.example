@@ -51,6 +51,12 @@ GPU_DETAIL_TIMEOUT=6
 #   (nvidia-smi is executed inside the job allocation via srun --overlap; no ssh to compute nodes)
 SHOW_MY_JOBS=1
 
+# 1=同时显示作业每张卡的显存占用和利用率（默认关闭）。实现方式为在作业分配内执行
+#   srun --overlap nvidia-smi，每次查询都会在 sacct 中为该作业记录一个作业步
+# 1 = also show per-GPU memory and utilisation of each job (off by default). Implemented with
+#   srun --overlap nvidia-smi inside the allocation; every query is recorded as a job step in sacct
+JOB_GPU_USAGE=0
+
 # 作业显存/利用率的查询间隔（秒）。集群数据每 15 秒刷新一次，作业 GPU 数据在此间隔内复用缓存，
 # 以免每次刷新都创建作业步（srun）
 # Interval (s) between per-job GPU queries; cached in between to avoid creating a job step on every refresh

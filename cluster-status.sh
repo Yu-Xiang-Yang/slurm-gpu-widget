@@ -12,7 +12,7 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PAT
 
 CONF="${CLUSTER_WIDGET_CONF:-$HOME/.config/cluster-widget/config}"
 # 命令行上的环境变量优先于配置文件
-_ENV_OVERRIDES="$(env | grep -E '^(TB_CONFIG|SSH_HOST|AUTO_CONNECT|CONNECT_TIMEOUT|SSH_TIMEOUT|PARTITIONS|GPU_ONLY|CLUSTER_NAME|SHOW_NODES|UI_LANG|GPU_MODELS|GPU_DETAIL|GPU_DETAIL_TIMEOUT|SHOW_MY_JOBS|JOB_GPU_INTERVAL)=' | sed "s/'/'\\\\''/g; s/=\(.*\)/='\1'/")"
+_ENV_OVERRIDES="$(env | grep -E '^(TB_CONFIG|SSH_HOST|AUTO_CONNECT|CONNECT_TIMEOUT|SSH_TIMEOUT|PARTITIONS|GPU_ONLY|CLUSTER_NAME|SHOW_NODES|UI_LANG|GPU_MODELS|GPU_DETAIL|GPU_DETAIL_TIMEOUT|SHOW_MY_JOBS|JOB_GPU_USAGE|JOB_GPU_INTERVAL)=' | sed "s/'/'\\\\''/g; s/=\(.*\)/='\1'/")"
 # shellcheck disable=SC1090
 [ -f "$CONF" ] && . "$CONF"
 eval "$_ENV_OVERRIDES"
@@ -25,6 +25,7 @@ GPU_MODELS="${GPU_MODELS:-}"            # 各分区 GPU 型号标注，如 "gpu=
 GPU_DETAIL="${GPU_DETAIL:-0}"           # 1=经登录节点 ssh 到各 GPU 节点执行 nvidia-smi，取每张卡的型号/显存/利用率
 GPU_DETAIL_TIMEOUT="${GPU_DETAIL_TIMEOUT:-6}"  # 每个节点 nvidia-smi 的超时（秒），各节点并行查询
 SHOW_MY_JOBS="${SHOW_MY_JOBS:-1}"       # 1=显示自己正在运行的作业：时长、每张卡的显存占用和利用率
+JOB_GPU_USAGE="${JOB_GPU_USAGE:-0}"     # 1=同时显示作业每张卡的显存/利用率（srun --overlap nvidia-smi，会在 sacct 中产生作业步）
 JOB_GPU_INTERVAL="${JOB_GPU_INTERVAL:-30}"  # 作业显存/利用率的查询间隔（秒）；期间复用缓存，避免频繁创建作业步
 CACHE_DIR="${CACHE_DIR:-$HOME/.cache/cluster-widget}"
 UI_LANG="${UI_LANG:-auto}"              # 界面语言：zh / en / auto（跟随系统语言）
@@ -115,7 +116,8 @@ elif [ "$STATE" = "CONNECTED" ] || [ "$STATE" = "NO_CONFIG" ]; then
     RAW="$(cat "$MOCK_DIR/scontrol"; echo '@@SQUEUE'; cat "$MOCK_DIR/squeue")"
     if [ "$GPU_DETAIL" = "1" ] && [ -f "$MOCK_DIR/gpu" ]; then RAW="$RAW"$'\n@@GPU\n'"$(cat "$MOCK_DIR/gpu")"; fi
     if [ "$SHOW_MY_JOBS" = "1" ] && [ -f "$MOCK_DIR/jobs" ]; then
-      RAW="$RAW"$'\n@@JOBS\n'"$(cat "$MOCK_DIR/jobs")"$'\n@@JOBGPU\n'"$(cat "$MOCK_DIR/jobgpu" 2>/dev/null)"
+      RAW="$RAW"$'\n@@JOBS\n'"$(cat "$MOCK_DIR/jobs")"
+      [ "$JOB_GPU_USAGE" = "1" ] && RAW="$RAW"$'\n@@JOBGPU\n'"$(cat "$MOCK_DIR/jobgpu" 2>/dev/null)"
     fi
   else
     REMOTE="scontrol show node -o 2>/dev/null; echo '@@SQUEUE'; squeue -h -o '%P|%T|%u' 2>/dev/null"
@@ -145,7 +147,9 @@ wait'
       # 作业 GPU 数据按 JOB_GPU_INTERVAL 节流：缓存未过期时跳过 srun，复用上次结果
       JOBGPU_CACHE="$CACHE_DIR/jobgpu"
       JOBGPU_FRESH=0
-      if [ -f "$JOBGPU_CACHE" ]; then
+      if [ "$JOB_GPU_USAGE" != "1" ]; then
+        JOBGPU_FRESH=1; : > "$JOBGPU_CACHE"   # 不查显存/利用率：跳过 srun，不产生作业步
+      elif [ -f "$JOBGPU_CACHE" ]; then
         age=$(( $(date +%s) - $(stat -f %m "$JOBGPU_CACHE" 2>/dev/null || echo 0) ))
         [ "$age" -lt "${JOB_GPU_INTERVAL:-30}" ] && JOBGPU_FRESH=1
       fi
@@ -406,7 +410,9 @@ END {
       k = jid[i]
       el = jel[i]; es = secs(jel[i]); ls = secs(jlim[i])
       if (mode == "stream" && es >= 0) el = "@@EL:" es ":" epoch ":" ls "@@"   # 插件按 当前时间-epoch 递增
-      printf "%s  %s  %s/%s  %s | font=Menlo size=12\n", k, jname[i], el, (ls < 0 ? L["unlimited"] : jlim[i]), jnodes[i]
+      gcnt = (match(jgres[i], /gpu[^,]*:[0-9]+/) ? substr(jgres[i], RSTART, RLENGTH) : "")
+      sub(/.*:/, "", gcnt)
+      printf "%s  %s  %s/%s  %s%s | font=Menlo size=12\n", k, jname[i], el, (ls < 0 ? L["unlimited"] : jlim[i]), jnodes[i], (gcnt != "" ? "  " gcnt " GPU" : "")
       for (m = 1; m <= jgc[k]; m++)
         printf "  GPU%s  %s %.1f/%.0fG  %d%% | font=Menlo size=12 color=gray\n", jgi[k, m], L["vram"], jgmu[k, m] / 1024, jgmt[k, m] / 1024, jgu[k, m]
     }

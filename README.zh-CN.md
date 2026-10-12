@@ -14,7 +14,7 @@
 - **MIG 识别**：由 MIG 切分 GPU（如 `gpu:2g.20gb:12`）构成的分区带有 `(MIG)` 标注，容量以 MIG 实例数而非物理卡数计。
 - **可配置集群名**（`CLUSTER_NAME`），显示于组件标题与菜单栏。
 - **内存与 GPU 型号**：按分区及节点显示主机内存占用（`RealMemory − FreeMem`），支持手动配置 GPU 型号标注（`GPU_MODELS`），并可选经 `nvidia-smi` 获取每张卡的型号、显存占用与利用率（`GPU_DETAIL=1`）。
-- **当前用户的运行作业**（`SHOW_MY_JOBS=1`）：作业号、作业名、已运行时长/时限、节点，以及该作业所占每张卡的显存占用与利用率。
+- **当前用户的运行作业**（`SHOW_MY_JOBS=1`）：作业号、作业名、已运行时长/时限、分区、节点及 GPU 数；逐卡显存占用与利用率为可选项（`JOB_GPU_USAGE=1`）。
 - **可选节点列表**（`SHOW_NODES=1`）：在每个分区下列出节点名、状态及单节点 GPU/CPU 占用（SwiftBar 中以子菜单呈现）。
 - **双语界面**（`UI_LANG`）：两种前端均支持中文或英文标签，可显式指定或跟随 macOS 系统语言。
 - **刷新机制**：两种前端的集群数据均每 15 s 刷新一次；作业已运行时长在本地每秒递增（Übersicht 组件定时器、SwiftBar 流式插件），不产生额外的集群查询。采集脚本以锁防止重叠运行，上一次运行未结束时直接返回上一次的结果。
@@ -75,8 +75,9 @@
 | `GPU_MODELS` | （空） | 各分区 GPU 型号标注，如 `gpu=NVIDIA A100 80GB;compute2=NVIDIA V100 32GB`；`Gres` 未写明型号时需手动填写。为空且 `GPU_DETAIL=1` 查询成功时，采用 `nvidia-smi` 报告的型号。 |
 | `GPU_DETAIL` | `0` | `1` 在所显示分区的每个 GPU 节点上执行 `nvidia-smi`（由登录节点并行 SSH），逐卡列出型号、显存已用/总量及利用率。 |
 | `GPU_DETAIL_TIMEOUT` | `6` | 单节点 `nvidia-smi` 查询超时（s）。 |
-| `SHOW_MY_JOBS` | `1` | `1` 列出当前用户的运行作业，含已运行时长、时限、节点及逐卡显存/利用率（在作业分配内执行 `nvidia-smi`）。 |
-| `JOB_GPU_INTERVAL` | `30` | 作业级 `nvidia-smi` 查询的最小间隔（s）；间隔内复用缓存，以限制组件创建的作业步数量。 |
+| `SHOW_MY_JOBS` | `1` | `1` 列出当前用户的运行作业，含已运行时长、时限、分区、节点及 GPU 数。仅调用 `squeue`，不产生作业步。 |
+| `JOB_GPU_USAGE` | `0` | `1` 另经 `srun --overlap nvidia-smi` 显示每个作业的逐卡显存与利用率。每次查询均在 `sacct` 中记录为一个作业步（频率受 `JOB_GPU_INTERVAL` 限制）。 |
+| `JOB_GPU_INTERVAL` | `30` | 仅在 `JOB_GPU_USAGE=1` 时生效：作业级 `nvidia-smi` 查询的最小间隔（s）；间隔内复用缓存，以限制组件创建的作业步数量。 |
 | `UI_LANG` | `auto` | 界面语言：`zh`、`en` 或 `auto`（系统首选语言为中文时显示中文，否则显示英文）。 |
 
 示例：不修改配置文件，临时查看全部分区及节点明细：
@@ -119,7 +120,7 @@ GPU_ONLY=0 SHOW_NODES=1 PARTITIONS=gpu,compute ~/.config/cluster-widget/cluster-
 | Übersicht 集群数据 | 15 s | `ubersicht/cluster-queue.widget/index.jsx` 顶部的 `REFRESH_SECONDS` |
 | SwiftBar 集群数据 | 15 s | `swiftbar/cluster.sh` 中的 `REFRESH_SECONDS`（流式插件，文件名中不含间隔） |
 | 作业已运行时长 | 1 s | 本地按 `elapsed_s + (now − epoch)` 计算，上限为 `limit_s` |
-| 作业级 GPU 显存/利用率 | 30 s | 配置文件中的 `JOB_GPU_INTERVAL` |
+| 作业级 GPU 显存/利用率（仅 `JOB_GPU_USAGE=1`） | 30 s | 配置文件中的 `JOB_GPU_INTERVAL` |
 
 ## 无集群环境下的测试
 
@@ -135,7 +136,7 @@ MOCK_DIR=mock SHOW_NODES=1 CLUSTER_NAME=Demo bash cluster-status.sh --swiftbar
 1. VPN 状态：`osascript -e 'tell application "Tunnelblick" to get state of first configuration where name = "…"'`。
 2. 数据采集：`ssh -o BatchMode=yes $SSH_HOST "scontrol show node -o; squeue -h -o '%P|%T|%u'"`。
 3. 可选 GPU 明细（`GPU_DETAIL=1`）：登录节点并行在各 GPU 节点上执行 `nvidia-smi --query-gpu=index,name,memory.used,memory.total,utilization.gpu`，单节点耗时受 `GPU_DETAIL_TIMEOUT` 限制。启用 `pam_slurm_adopt` 的集群仅允许登录用户有运行作业的节点，其余节点退回 Slurm 提供的数据。
-4. 运行作业（`SHOW_MY_JOBS=1`）：`squeue -u $USER -t R` 提供作业号、作业名、已运行时长、时限与节点。对每个作业（至多 8 个）在其已有分配内执行 `srun --jobid=<id> --overlap -N1 -n1 nvidia-smi …`；在 `ConstrainDevices=yes` 的配置下仅可见该作业占用的 GPU，因此无需索引映射，也不申请额外资源。该方式不受 `pam_slurm_adopt` 限制。
+4. 运行作业（`SHOW_MY_JOBS=1`）：`squeue -u $USER -t R` 提供作业号、作业名、已运行时长、时限、节点及每节点 GPU 数。仅当 `JOB_GPU_USAGE=1` 时，对每个作业（至多 8 个）在其已有分配内执行 `srun --jobid=<id> --overlap -N1 -n1 nvidia-smi …`；在 `ConstrainDevices=yes` 的配置下仅可见该作业占用的 GPU，因此无需索引映射，也不申请额外资源。该方式不受 `pam_slurm_adopt` 限制，但每次查询均在 `sacct` 中显示为一个作业步（如 `<jobid>.0`、`<jobid>.1`……），因此默认关闭。
 5. 本地汇总（`awk`）：CPU 取 `CPUAlloc/CPUTot`；GPU 总数由 `Gres` 解析（兼容 `gpu:a100:8(S:0-1)`、`gpu:4`、`gpu:2g.20gb:12,gpu:1g.20gb:4` 等格式），已分配数取自 `AllocTRES` 中的 `gres/gpu=N`（为零时该项缺省）。`Partitions` 字段按逗号拆分，节点计入其所属的每个分区。
 
 ## 故障排查

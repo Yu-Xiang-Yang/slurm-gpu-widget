@@ -14,7 +14,7 @@ A macOS desktop widget and menu-bar plugin that reports the per-partition (queue
 - **MIG awareness**: partitions backed by MIG-partitioned GPUs (e.g. `gpu:2g.20gb:12`) are labelled, and their capacity is reported in MIG instances rather than physical cards.
 - **Configurable cluster name** (`CLUSTER_NAME`), displayed in the widget title and the menu bar.
 - **Memory and GPU model**: per-partition and per-node host memory (`RealMemory − FreeMem`), a configurable GPU model label (`GPU_MODELS`), and optional per-GPU model, memory usage and utilisation from `nvidia-smi` (`GPU_DETAIL=1`).
-- **Running jobs of the current user** (`SHOW_MY_JOBS=1`): job ID, name, elapsed time / time limit, nodes, and per-GPU memory usage and utilisation for the GPUs held by each job.
+- **Running jobs of the current user** (`SHOW_MY_JOBS=1`): job ID, name, elapsed time / time limit, partition, nodes and number of GPUs; per-GPU memory usage and utilisation are available as an opt-in (`JOB_GPU_USAGE=1`).
 - **Optional node list** (`SHOW_NODES=1`): node names with state and per-node GPU/CPU usage under each partition (a submenu in SwiftBar).
 - **Bilingual interface** (`UI_LANG`): Chinese or English labels in both front ends, selected explicitly or from the macOS language.
 - **Refresh behaviour**: cluster data is refreshed every 15 s in both front ends; job elapsed times advance every second locally (Übersicht component timer, SwiftBar streamable plugin) without additional cluster queries. Overlapping collector runs are suppressed by a lock, and the previous result is returned instead.
@@ -75,8 +75,9 @@ File: `~/.config/cluster-widget/config` (template: [`config.example`](config.exa
 | `GPU_MODELS` | *(empty)* | GPU model label per partition, e.g. `gpu=NVIDIA A100 80GB;compute2=NVIDIA V100 32GB`; needed when `Gres` carries no type. When empty and `GPU_DETAIL=1` succeeds, the model reported by `nvidia-smi` is used. |
 | `GPU_DETAIL` | `0` | `1` runs `nvidia-smi` on every GPU node of the displayed partitions (parallel SSH from the login node) and lists each GPU with model, memory used/total and utilisation. |
 | `GPU_DETAIL_TIMEOUT` | `6` | Per-node timeout (s) for the `nvidia-smi` query. |
-| `SHOW_MY_JOBS` | `1` | `1` lists the user's running jobs with elapsed time, time limit, nodes and per-GPU memory/utilisation (`nvidia-smi` executed inside the job allocation). |
-| `JOB_GPU_INTERVAL` | `30` | Minimum interval (s) between per-job `nvidia-smi` queries; results are cached in between, which bounds the number of job steps created by the widget. |
+| `SHOW_MY_JOBS` | `1` | `1` lists the user's running jobs with elapsed time, time limit, partition, nodes and GPU count. Only `squeue` is used; no job steps are created. |
+| `JOB_GPU_USAGE` | `0` | `1` additionally shows per-GPU memory and utilisation of each job via `srun --overlap nvidia-smi`. Each query is recorded as a job step in `sacct` (rate-limited by `JOB_GPU_INTERVAL`). |
+| `JOB_GPU_INTERVAL` | `30` | Effective only with `JOB_GPU_USAGE=1`: minimum interval (s) between per-job `nvidia-smi` queries; results are cached in between, which bounds the number of job steps created by the widget. |
 | `UI_LANG` | `auto` | Interface language: `zh`, `en`, or `auto` (Chinese when the primary macOS language is Chinese, otherwise English). |
 
 Example: a temporary view of all partitions with node details, independent of the configuration file:
@@ -119,7 +120,7 @@ When `SHOW_MY_JOBS=1`, the top-level object additionally contains `"my_jobs": [{
 | Übersicht, cluster data | 15 s | `REFRESH_SECONDS` at the top of `ubersicht/cluster-queue.widget/index.jsx` |
 | SwiftBar, cluster data | 15 s | `REFRESH_SECONDS` in `swiftbar/cluster.sh` (streamable plugin, therefore no interval in the file name) |
 | Job elapsed time | 1 s | computed locally as `elapsed_s + (now − epoch)`, capped at `limit_s` |
-| Per-job GPU memory/utilisation | 30 s | `JOB_GPU_INTERVAL` in the configuration file |
+| Per-job GPU memory/utilisation (`JOB_GPU_USAGE=1` only) | 30 s | `JOB_GPU_INTERVAL` in the configuration file |
 
 ## Testing without a cluster
 
@@ -135,7 +136,7 @@ MOCK_DIR=mock SHOW_NODES=1 CLUSTER_NAME=Demo bash cluster-status.sh --swiftbar
 1. VPN state: `osascript -e 'tell application "Tunnelblick" to get state of first configuration where name = "…"'`.
 2. Data acquisition: `ssh -o BatchMode=yes $SSH_HOST "scontrol show node -o; squeue -h -o '%P|%T|%u'"`.
 3. Optional GPU detail (`GPU_DETAIL=1`): the login node runs `nvidia-smi --query-gpu=index,name,memory.used,memory.total,utilization.gpu` on all GPU nodes in parallel, each bounded by `GPU_DETAIL_TIMEOUT`. On clusters with `pam_slurm_adopt`, only nodes on which the user has a running job accept the connection; the remaining nodes fall back to the Slurm-derived figures.
-4. Running jobs (`SHOW_MY_JOBS=1`): `squeue -u $USER -t R` supplies ID, name, elapsed time, limit and nodes. For each job (at most 8), `srun --jobid=<id> --overlap -N1 -n1 nvidia-smi …` is executed within the existing allocation; with `ConstrainDevices=yes`, only the GPUs held by that job are visible, so no index mapping is required and no additional resources are requested. This path is unaffected by `pam_slurm_adopt`.
+4. Running jobs (`SHOW_MY_JOBS=1`): `squeue -u $USER -t R` supplies ID, name, elapsed time, limit, nodes and GPUs per node. Only when `JOB_GPU_USAGE=1`, for each job (at most 8), `srun --jobid=<id> --overlap -N1 -n1 nvidia-smi …` is executed within the existing allocation; with `ConstrainDevices=yes`, only the GPUs held by that job are visible, so no index mapping is required and no additional resources are requested. This path is unaffected by `pam_slurm_adopt`, but every query appears as a job step (e.g. `<jobid>.0`, `<jobid>.1`, …) in `sacct`; it is therefore disabled by default.
 5. Aggregation (local `awk`): `CPUAlloc/CPUTot` for CPUs; the GPU total is derived from `Gres` (e.g. `gpu:a100:8(S:0-1)`, `gpu:4`, `gpu:2g.20gb:12,gpu:1g.20gb:4`), and the allocated count from `gres/gpu=N` in `AllocTRES` (absent when zero). The `Partitions` field is split on commas, so a node contributes to each partition it belongs to.
 
 ## Troubleshooting
