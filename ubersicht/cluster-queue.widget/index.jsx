@@ -70,12 +70,12 @@ const STR = {
   zh: {
     free: "空闲", run: "运行", pend: "排队", me: "我", maxfree: "单节点最多空闲", cards: "卡", mig: "个 MIG 实例",
     nodes: "节点", idle: "空闲", down: "不可用", nodata: "脚本没有返回数据", drag: "拖动移动位置，双击恢复默认",
-    model: "型号", mem: "内存", title: "GPU 队列", clickConnect: "点击连接 VPN", connected: "已连接", updated: "更新于",
+    model: "型号", mem: "内存", myjobs: "我的作业", vram: "显存", title: "GPU 队列", clickConnect: "点击连接 VPN", connected: "已连接", updated: "更新于",
   },
   en: {
     free: "free", run: "running", pend: "pending", me: "mine", maxfree: "Max free on one node:", cards: "GPUs", mig: "MIG instances",
     nodes: "nodes", idle: "idle", down: "down", nodata: "The script returned no data", drag: "Drag to move, double-click to reset",
-    model: "Model", mem: "RAM", title: "GPU Queues", clickConnect: "Click to connect VPN", connected: "connected", updated: "Updated",
+    model: "Model", mem: "RAM", myjobs: "My jobs", vram: "VRAM", title: "GPU Queues", clickConnect: "Click to connect VPN", connected: "connected", updated: "Updated",
   },
 };
 let T = STR[(typeof navigator !== "undefined" && /^zh/.test(navigator.language)) ? "zh" : "en"];
@@ -126,6 +126,28 @@ const NodeRow = ({ n }) => (
       )}
     </div>
     {(n.gpus || []).map((g) => <GpuRow key={g.index} g={g} />)}
+  </div>
+);
+
+// 自己正在运行的作业（配置 SHOW_MY_JOBS=1）
+const Job = ({ j }) => (
+  <div style={{ marginTop: 6 }}>
+    <div style={{ display: "flex", gap: 6, fontSize: 11, fontVariantNumeric: "tabular-nums" }}>
+      <span style={{ fontWeight: 600 }}>{j.id}</span>
+      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", opacity: 0.85 }}>{j.name}</span>
+      <span style={{ opacity: 0.85 }}>{j.elapsed}<span style={{ opacity: 0.5 }}> / {j.limit}</span></span>
+    </div>
+    <div style={{ fontSize: 10, opacity: 0.5 }}>{j.partition} · {j.nodes}</div>
+    {j.gpus.map((g) => (
+      <div key={g.index} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, fontVariantNumeric: "tabular-nums" }}>
+        <span style={{ width: 34, opacity: 0.7 }}>GPU{g.index}</span>
+        <div style={{ flex: 1, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.15)" }}>
+          <div style={{ width: `${pct(g.mem_used, g.mem_total)}%`, height: "100%", borderRadius: 2, background: color(pct(g.mem_used, g.mem_total)) }} />
+        </div>
+        <span style={{ width: 96, textAlign: "right" }}>{T.vram} {(g.mem_used / 1024).toFixed(1)}/{Math.round(g.mem_total / 1024)}G</span>
+        <span style={{ width: 32, textAlign: "right", color: color(g.util) }}>{g.util}%</span>
+      </div>
+    ))}
   </div>
 );
 
@@ -191,6 +213,12 @@ export const render = ({ output, error }) => {
       </div>
       {d.error && <div style={{ marginTop: 8, color: "#ff9f0a" }}>{d.error}</div>}
       {d.partitions.map((p) => <Partition key={p.name} p={p} gpuOnly={d.gpu_only} />)}
+      {d.my_jobs && d.my_jobs.length > 0 && (
+        <div style={{ marginTop: 12, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.12)" }}>
+          <div style={{ fontWeight: 600 }}>{T.myjobs} ({d.my_jobs.length})</div>
+          {d.my_jobs.map((j) => <Job key={j.id} j={j} />)}
+        </div>
+      )}
       <div style={{ marginTop: 10, opacity: 0.4, fontSize: 10, textAlign: "right" }}>{T.updated} {d.time}</div>
     </div>
   );

@@ -12,7 +12,7 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PAT
 
 CONF="${CLUSTER_WIDGET_CONF:-$HOME/.config/cluster-widget/config}"
 # 命令行上的环境变量优先于配置文件
-_ENV_OVERRIDES="$(env | grep -E '^(TB_CONFIG|SSH_HOST|AUTO_CONNECT|CONNECT_TIMEOUT|SSH_TIMEOUT|PARTITIONS|GPU_ONLY|CLUSTER_NAME|SHOW_NODES|UI_LANG|GPU_MODELS|GPU_DETAIL|GPU_DETAIL_TIMEOUT)=' | sed "s/'/'\\\\''/g; s/=\(.*\)/='\1'/")"
+_ENV_OVERRIDES="$(env | grep -E '^(TB_CONFIG|SSH_HOST|AUTO_CONNECT|CONNECT_TIMEOUT|SSH_TIMEOUT|PARTITIONS|GPU_ONLY|CLUSTER_NAME|SHOW_NODES|UI_LANG|GPU_MODELS|GPU_DETAIL|GPU_DETAIL_TIMEOUT|SHOW_MY_JOBS)=' | sed "s/'/'\\\\''/g; s/=\(.*\)/='\1'/")"
 # shellcheck disable=SC1090
 [ -f "$CONF" ] && . "$CONF"
 eval "$_ENV_OVERRIDES"
@@ -24,6 +24,7 @@ SHOW_NODES="${SHOW_NODES:-0}"           # 1=在每个分区下列出节点名及
 GPU_MODELS="${GPU_MODELS:-}"            # 各分区 GPU 型号标注，如 "gpu=A100 80GB;gpu_small=A100 80GB MIG"
 GPU_DETAIL="${GPU_DETAIL:-0}"           # 1=经登录节点 ssh 到各 GPU 节点执行 nvidia-smi，取每张卡的型号/显存/利用率
 GPU_DETAIL_TIMEOUT="${GPU_DETAIL_TIMEOUT:-6}"  # 每个节点 nvidia-smi 的超时（秒），各节点并行查询
+SHOW_MY_JOBS="${SHOW_MY_JOBS:-1}"       # 1=显示自己正在运行的作业：时长、每张卡的显存占用和利用率
 UI_LANG="${UI_LANG:-auto}"              # 界面语言：zh / en / auto（跟随系统语言）
 if [ "$UI_LANG" = "auto" ]; then
   case "$(defaults read -g AppleLanguages 2>/dev/null | sed -n '2p')" in
@@ -95,6 +96,9 @@ elif [ "$STATE" = "CONNECTED" ] || [ "$STATE" = "NO_CONFIG" ]; then
   if [ -n "$MOCK_DIR" ]; then
     RAW="$(cat "$MOCK_DIR/scontrol"; echo '@@SQUEUE'; cat "$MOCK_DIR/squeue")"
     if [ "$GPU_DETAIL" = "1" ] && [ -f "$MOCK_DIR/gpu" ]; then RAW="$RAW"$'\n@@GPU\n'"$(cat "$MOCK_DIR/gpu")"; fi
+    if [ "$SHOW_MY_JOBS" = "1" ] && [ -f "$MOCK_DIR/jobs" ]; then
+      RAW="$RAW"$'\n@@JOBS\n'"$(cat "$MOCK_DIR/jobs")"$'\n@@JOBGPU\n'"$(cat "$MOCK_DIR/jobgpu" 2>/dev/null)"
+    fi
   else
     REMOTE="scontrol show node -o 2>/dev/null; echo '@@SQUEUE'; squeue -h -o '%P|%T|%u' 2>/dev/null"
     if [ "$GPU_DETAIL" = "1" ]; then
@@ -109,6 +113,18 @@ done
 wait'
       GPU_REMOTE="${GPU_REMOTE//__PFLAG__/$PFLAG}"; GPU_REMOTE="${GPU_REMOTE//__TMO__/$TMO}"
       REMOTE="$REMOTE; $GPU_REMOTE"
+    fi
+    if [ "$SHOW_MY_JOBS" = "1" ]; then
+      # 自己正在运行的作业；在作业分配内用 srun --overlap 执行 nvidia-smi，只看到该作业占用的卡
+      TMO="$(printf '%s' "$GPU_DETAIL_TIMEOUT" | tr -cd '0-9')"; TMO="${TMO:-6}"
+      JOB_REMOTE='echo @@JOBS
+squeue -h -u "$USER" -t R -o "%i|%j|%P|%M|%l|%N|%b" 2>/dev/null
+echo @@JOBGPU
+for j in $(squeue -h -u "$USER" -t R -o "%i" 2>/dev/null | head -8); do
+  (timeout __TMO__ srun --jobid="$j" --overlap -N1 -n1 nvidia-smi --query-gpu=index,name,memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits 2>/dev/null | sed "s/^/$j, /") &
+done
+wait'
+      REMOTE="$REMOTE; ${JOB_REMOTE//__TMO__/$TMO}"
     fi
     RAW="$(ssh -o BatchMode=yes -o ConnectTimeout="$SSH_TIMEOUT" "$SSH_HOST" "$REMOTE" 2>&1)"
     rc=$?
@@ -131,7 +147,7 @@ export SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
 printf '%s\n' "$RAW" | awk -v mode="$MODE" -v vpn="$STATE" -v err="$ERR" -v now="$NOW" \
   -v filter="$PARTITIONS" -v gpuonly="$GPU_ONLY" -v me="${USER:-}" \
-  -v cluster="$CLUSTER_NAME" -v shownodes="$SHOW_NODES" -v lang="$UI_LANG" -v models="$GPU_MODELS" '
+  -v cluster="$CLUSTER_NAME" -v shownodes="$SHOW_NODES" -v lang="$UI_LANG" -v models="$GPU_MODELS" -v showjobs="$SHOW_MY_JOBS" '
 function val(line, key,    i, n, parts) {
   n = split(line, parts, " ")
   for (i = 1; i <= n; i++)
@@ -175,12 +191,12 @@ function i18n() {
     L["cluster"] = "集群"; L["gpufree"] = "GPU 空闲"; L["run"] = "运行"; L["pend"] = "排队"; L["mine"] = "我的"
     L["free"] = "空闲"; L["maxfree"] = "单节点最多空闲"; L["cards"] = "卡"; L["mig"] = "个 MIG 实例"
     L["nodes"] = "节点"; L["idle"] = "空闲"; L["down"] = "不可用"; L["updated"] = "更新于"
-    L["connect"] = "连接 VPN"; L["refresh"] = "刷新"; L["model"] = "型号"; L["mem"] = "内存"
+    L["connect"] = "连接 VPN"; L["refresh"] = "刷新"; L["model"] = "型号"; L["mem"] = "内存"; L["myjobs"] = "我的作业"; L["vram"] = "显存"
   } else {
     L["cluster"] = "Cluster"; L["gpufree"] = "GPU free"; L["run"] = "running"; L["pend"] = "pending"; L["mine"] = "mine"
     L["free"] = "free"; L["maxfree"] = "Max free on one node:"; L["cards"] = "GPUs"; L["mig"] = "MIG instances"
     L["nodes"] = "nodes"; L["idle"] = "idle"; L["down"] = "down"; L["updated"] = "Updated"
-    L["connect"] = "Connect VPN"; L["refresh"] = "Refresh"; L["model"] = "Model"; L["mem"] = "RAM"
+    L["connect"] = "Connect VPN"; L["refresh"] = "Refresh"; L["model"] = "Model"; L["mem"] = "RAM"; L["myjobs"] = "My jobs"; L["vram"] = "VRAM"
   }
 }
 
@@ -193,6 +209,21 @@ BEGIN {
 }
 $0 == "@@SQUEUE" { sect = "q"; next }
 $0 == "@@GPU" { sect = "g"; next }
+$0 == "@@JOBS" { sect = "j"; next }
+$0 == "@@JOBGPU" { sect = "jg"; next }
+# 自己的作业："id|name|partition|elapsed|limit|nodelist|tres_per_node"
+sect == "j" && NF {
+  split($0, f, "|"); nj++
+  jid[nj] = f[1]; jname[nj] = f[2]; jpart[nj] = f[3]; jel[nj] = f[4]; jlim[nj] = f[5]; jnodes[nj] = f[6]; jgres[nj] = f[7]
+  next
+}
+# 作业内 nvidia-smi："jobid, index, name, memory.used, memory.total, utilization.gpu"
+sect == "jg" && NF {
+  if (split($0, g, /, */) < 6) next
+  k = g[1]; jgc[k]++
+  jgi[k, jgc[k]] = g[2]; jgn[k, jgc[k]] = g[3]; jgmu[k, jgc[k]] = g[4] + 0; jgmt[k, jgc[k]] = g[5] + 0; jgu[k, jgc[k]] = g[6] + 0
+  next
+}
 # nvidia-smi 明细："节点, index, name, memory.used, memory.total, utilization.gpu"（显存单位 MiB）
 sect == "g" && NF {
   ng_ = split($0, g, /, */); if (ng_ < 6) next
@@ -273,7 +304,21 @@ END {
       }
       printf "}"
     }
-    print "]}"
+    printf "]"
+    if (showjobs == "1") {
+      printf ",\"my_jobs\":["
+      for (i = 1; i <= nj; i++) {
+        k = jid[i]
+        printf "%s{\"id\":\"%s\",\"name\":\"%s\",\"partition\":\"%s\",\"elapsed\":\"%s\",\"limit\":\"%s\",\"nodes\":\"%s\",\"gres\":\"%s\",\"gpus\":[", \
+          (i > 1 ? "," : ""), jesc(k), jesc(jname[i]), jesc(jpart[i]), jesc(jel[i]), jesc(jlim[i]), jesc(jnodes[i]), jesc(jgres[i])
+        for (m = 1; m <= jgc[k]; m++)
+          printf "%s{\"index\":%d,\"name\":\"%s\",\"mem_used\":%d,\"mem_total\":%d,\"util\":%d}", \
+            (m > 1 ? "," : ""), jgi[k, m], jesc(jgn[k, m]), jgmu[k, m], jgmt[k, m], jgu[k, m]
+        printf "]}"
+      }
+      printf "]"
+    }
+    print "}"
     exit
   }
   # SwiftBar：第一行显示在菜单栏，"---" 之后是下拉菜单
@@ -307,6 +352,16 @@ END {
         for (k = 1; k <= gc[n_]; k++)   # 三级菜单：每张卡
           printf "----GPU%s  %s  %.1f/%.0fG  %d%% | font=Menlo size=12\n", gidx[n_, k], gname[n_, k], gmu[n_, k] / 1024, gmt[n_, k] / 1024, gut[n_, k]
       }
+  }
+  if (showjobs == "1" && nj > 0) {
+    print "---"
+    printf "%s (%d) | font=Menlo-Bold\n", L["myjobs"], nj
+    for (i = 1; i <= nj; i++) {
+      k = jid[i]
+      printf "%s  %s  %s/%s  %s | font=Menlo size=12\n", k, jname[i], jel[i], jlim[i], jnodes[i]
+      for (m = 1; m <= jgc[k]; m++)
+        printf "  GPU%s  %s %.1f/%.0fG  %d%% | font=Menlo size=12 color=gray\n", jgi[k, m], L["vram"], jgmu[k, m] / 1024, jgmt[k, m] / 1024, jgu[k, m]
+    }
   }
   print "---"
   printf "%s %s | color=gray\n", L["updated"], now

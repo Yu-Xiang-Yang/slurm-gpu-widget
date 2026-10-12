@@ -1,0 +1,2 @@
+123456|train_llm|gpu|1:23:45|2-00:00:00|gpu01|gres/gpu:2
+123457|eval|gpu-v100|0:05:12|4:00:00|gpu04|gres/gpu:1

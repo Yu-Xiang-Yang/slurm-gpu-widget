@@ -44,3 +44,9 @@ GPU_MODELS=""   # e.g. "gpu=NVIDIA A100 80GB;compute2=NVIDIA V100 32GB"
 #   requires password-less ssh from the login node to compute nodes (pam_slurm_adopt restricts this to nodes running your jobs)
 GPU_DETAIL=0
 GPU_DETAIL_TIMEOUT=6
+
+# 1=显示自己正在运行的作业：已运行时长/时限、节点，以及该作业每张卡的显存占用和利用率
+#   （在作业分配内执行 srun --overlap nvidia-smi，不需要 ssh 到计算节点）
+# 1 = list your running jobs with elapsed/limit, nodes, and per-GPU memory and utilisation
+#   (nvidia-smi is executed inside the job allocation via srun --overlap; no ssh to compute nodes)
+SHOW_MY_JOBS=1
