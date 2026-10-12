@@ -1,10 +1,12 @@
 // Übersicht 桌面组件：显示 Tunnelblick VPN 状态和 Slurm 各分区 CPU/GPU 占用
-import { run } from "uebersicht";
+import { run, React } from "uebersicht";
 
 const SCRIPT = "$HOME/.config/cluster-widget/cluster-status.sh";
 
 export const command = SCRIPT;
-export const refreshFrequency = 60 * 1000; // 每分钟刷新
+// 刷新间隔：集群数据每 REFRESH_SECONDS 秒查询一次；作业计时在卡片上每秒本地递增，不额外查询集群
+const REFRESH_SECONDS = 15;
+export const refreshFrequency = REFRESH_SECONDS * 1000;
 
 // 位置：按住标题栏拖动即可移动，位置保存在 localStorage；双击标题栏恢复默认（右上角）
 const POS_KEY = "cluster-queue-pos";
@@ -70,12 +72,12 @@ const STR = {
   zh: {
     free: "空闲", run: "运行", pend: "排队", me: "我", maxfree: "单节点最多空闲", cards: "卡", mig: "个 MIG 实例",
     nodes: "节点", idle: "空闲", down: "不可用", nodata: "脚本没有返回数据", drag: "拖动移动位置，双击恢复默认",
-    model: "型号", mem: "内存", myjobs: "我的作业", vram: "显存", title: "GPU 队列", clickConnect: "点击连接 VPN", connected: "已连接", updated: "更新于",
+    model: "型号", mem: "内存", myjobs: "我的作业", vram: "显存", unlimited: "不限", title: "GPU 队列", clickConnect: "点击连接 VPN", connected: "已连接", updated: "更新于",
   },
   en: {
     free: "free", run: "running", pend: "pending", me: "mine", maxfree: "Max free on one node:", cards: "GPUs", mig: "MIG instances",
     nodes: "nodes", idle: "idle", down: "down", nodata: "The script returned no data", drag: "Drag to move, double-click to reset",
-    model: "Model", mem: "RAM", myjobs: "My jobs", vram: "VRAM", title: "GPU Queues", clickConnect: "Click to connect VPN", connected: "connected", updated: "Updated",
+    model: "Model", mem: "RAM", myjobs: "My jobs", vram: "VRAM", unlimited: "unlimited", title: "GPU Queues", clickConnect: "Click to connect VPN", connected: "connected", updated: "Updated",
   },
 };
 let T = STR[(typeof navigator !== "undefined" && /^zh/.test(navigator.language)) ? "zh" : "en"];
@@ -129,13 +131,36 @@ const NodeRow = ({ n }) => (
   </div>
 );
 
+// 秒数 -> squeue 风格 "D-HH:MM:SS" / "H:MM:SS"
+const fmtDur = (s) => {
+  if (s < 0) return T.unlimited;
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+  const p2 = (n) => String(n).padStart(2, "0");
+  return d > 0 ? `${d}-${p2(h)}:${p2(m)}:${p2(x)}` : `${h}:${p2(m)}:${p2(x)}`;
+};
+
+// 每秒本地递增的作业计时：elapsed = 采集时的已运行秒数 + (现在 - 采集时刻)
+class Elapsed extends React.Component {
+  componentDidMount() { this.t = setInterval(() => this.forceUpdate(), 1000); }
+  componentWillUnmount() { clearInterval(this.t); }
+  render() {
+    const { base, epoch, limit } = this.props;
+    let s = base + Math.max(0, Math.floor(Date.now() / 1000) - epoch);
+    if (limit >= 0) s = Math.min(s, limit);
+    return <span>{fmtDur(s)}</span>;
+  }
+}
+
 // 自己正在运行的作业（配置 SHOW_MY_JOBS=1）
-const Job = ({ j }) => (
+const Job = ({ j, epoch }) => (
   <div style={{ marginTop: 6 }}>
     <div style={{ display: "flex", gap: 6, fontSize: 11, fontVariantNumeric: "tabular-nums" }}>
       <span style={{ fontWeight: 600 }}>{j.id}</span>
       <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", opacity: 0.85 }}>{j.name}</span>
-      <span style={{ opacity: 0.85 }}>{j.elapsed}<span style={{ opacity: 0.5 }}> / {j.limit}</span></span>
+      <span style={{ opacity: 0.85 }}>
+        {j.elapsed_s >= 0 && epoch ? <Elapsed base={j.elapsed_s} epoch={epoch} limit={j.limit_s} /> : j.elapsed}
+        <span style={{ opacity: 0.5 }}> / {j.limit_s !== undefined ? fmtDur(j.limit_s) : j.limit}</span>
+      </span>
     </div>
     <div style={{ fontSize: 10, opacity: 0.5 }}>{j.partition} · {j.nodes}</div>
     {j.gpus.map((g) => (
@@ -216,7 +241,7 @@ export const render = ({ output, error }) => {
       {d.my_jobs && d.my_jobs.length > 0 && (
         <div style={{ marginTop: 12, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.12)" }}>
           <div style={{ fontWeight: 600 }}>{T.myjobs} ({d.my_jobs.length})</div>
-          {d.my_jobs.map((j) => <Job key={j.id} j={j} />)}
+          {d.my_jobs.map((j) => <Job key={j.id} j={j} epoch={d.epoch} />)}
         </div>
       )}
       <div style={{ marginTop: 10, opacity: 0.4, fontSize: 10, textAlign: "right" }}>{T.updated} {d.time}</div>

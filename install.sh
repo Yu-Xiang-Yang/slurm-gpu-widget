@@ -28,7 +28,8 @@ if [ -z "$SB" ] && [ -d "/Applications/SwiftBar.app" ]; then
   defaults write com.ameba.SwiftBar PluginDirectory "$SB"
 fi
 if [ -n "$SB" ] && [ -d "$SB" ]; then
-  cp swiftbar/cluster.1m.sh "$SB/" && chmod +x "$SB/cluster.1m.sh"
+  rm -f "$SB"/cluster.*.sh "$SB/cluster.sh"   # 去掉旧版插件（如 cluster.1m.sh）
+  cp swiftbar/cluster.sh "$SB/" && chmod +x "$SB/cluster.sh"
   echo "已安装 SwiftBar 菜单栏插件 / SwiftBar plugin installed"
 fi
 

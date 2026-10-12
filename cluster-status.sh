@@ -12,7 +12,7 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PAT
 
 CONF="${CLUSTER_WIDGET_CONF:-$HOME/.config/cluster-widget/config}"
 # 命令行上的环境变量优先于配置文件
-_ENV_OVERRIDES="$(env | grep -E '^(TB_CONFIG|SSH_HOST|AUTO_CONNECT|CONNECT_TIMEOUT|SSH_TIMEOUT|PARTITIONS|GPU_ONLY|CLUSTER_NAME|SHOW_NODES|UI_LANG|GPU_MODELS|GPU_DETAIL|GPU_DETAIL_TIMEOUT|SHOW_MY_JOBS)=' | sed "s/'/'\\\\''/g; s/=\(.*\)/='\1'/")"
+_ENV_OVERRIDES="$(env | grep -E '^(TB_CONFIG|SSH_HOST|AUTO_CONNECT|CONNECT_TIMEOUT|SSH_TIMEOUT|PARTITIONS|GPU_ONLY|CLUSTER_NAME|SHOW_NODES|UI_LANG|GPU_MODELS|GPU_DETAIL|GPU_DETAIL_TIMEOUT|SHOW_MY_JOBS|JOB_GPU_INTERVAL)=' | sed "s/'/'\\\\''/g; s/=\(.*\)/='\1'/")"
 # shellcheck disable=SC1090
 [ -f "$CONF" ] && . "$CONF"
 eval "$_ENV_OVERRIDES"
@@ -25,6 +25,8 @@ GPU_MODELS="${GPU_MODELS:-}"            # 各分区 GPU 型号标注，如 "gpu=
 GPU_DETAIL="${GPU_DETAIL:-0}"           # 1=经登录节点 ssh 到各 GPU 节点执行 nvidia-smi，取每张卡的型号/显存/利用率
 GPU_DETAIL_TIMEOUT="${GPU_DETAIL_TIMEOUT:-6}"  # 每个节点 nvidia-smi 的超时（秒），各节点并行查询
 SHOW_MY_JOBS="${SHOW_MY_JOBS:-1}"       # 1=显示自己正在运行的作业：时长、每张卡的显存占用和利用率
+JOB_GPU_INTERVAL="${JOB_GPU_INTERVAL:-30}"  # 作业显存/利用率的查询间隔（秒）；期间复用缓存，避免频繁创建作业步
+CACHE_DIR="${CACHE_DIR:-$HOME/.cache/cluster-widget}"
 UI_LANG="${UI_LANG:-auto}"              # 界面语言：zh / en / auto（跟随系统语言）
 if [ "$UI_LANG" = "auto" ]; then
   case "$(defaults read -g AppleLanguages 2>/dev/null | sed -n '2p')" in
@@ -43,6 +45,7 @@ MOCK_DIR="${MOCK_DIR:-}"                # 测试用：从目录读取假数据�
 MODE="json"
 case "$1" in
   --swiftbar) MODE="swiftbar" ;;
+  --swiftbar-stream) MODE="stream" ;;   # 给 SwiftBar 流式插件用：作业时长输出为占位符，由插件每秒替换
   --connect)  MODE="connect" ;;
 esac
 
@@ -79,6 +82,21 @@ vpn_connect() {
 if [ "$MODE" = "connect" ]; then
   vpn_connect; exit $?
 fi
+
+# ---------- 防止重叠运行 ----------
+# 上一次采集尚未结束（如 VPN/ssh 慢）时，直接输出上一次的结果，不再发起新的查询
+mkdir -p "$CACHE_DIR" 2>/dev/null
+RUN_LOCK="$CACHE_DIR/run-$MODE.lock"
+LAST_OUT="$CACHE_DIR/last-$MODE.out"
+if ! mkdir "$RUN_LOCK" 2>/dev/null; then
+  # 锁超过 90 秒视为残留（进程被杀），清除后继续
+  if [ -n "$(find "$RUN_LOCK" -maxdepth 0 -mmin +1.5 2>/dev/null)" ]; then
+    rmdir "$RUN_LOCK" 2>/dev/null; mkdir "$RUN_LOCK" 2>/dev/null || { cat "$LAST_OUT" 2>/dev/null; exit 0; }
+  else
+    cat "$LAST_OUT" 2>/dev/null; exit 0
+  fi
+fi
+trap 'rmdir "$RUN_LOCK" 2>/dev/null' EXIT
 
 # ---------- 采集 ----------
 
@@ -120,25 +138,43 @@ wait'
       JOB_REMOTE='echo @@JOBS
 squeue -h -u "$USER" -t R -o "%i|%j|%P|%M|%l|%N|%b" 2>/dev/null
 echo @@JOBGPU
-for j in $(squeue -h -u "$USER" -t R -o "%i" 2>/dev/null | head -8); do
+__JOBGPU_ON__ && for j in $(squeue -h -u "$USER" -t R -o "%i" 2>/dev/null | head -8); do
   (timeout __TMO__ srun --jobid="$j" --overlap -N1 -n1 nvidia-smi --query-gpu=index,name,memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits 2>/dev/null | sed "s/^/$j, /") &
 done
 wait'
-      REMOTE="$REMOTE; ${JOB_REMOTE//__TMO__/$TMO}"
+      # 作业 GPU 数据按 JOB_GPU_INTERVAL 节流：缓存未过期时跳过 srun，复用上次结果
+      JOBGPU_CACHE="$CACHE_DIR/jobgpu"
+      JOBGPU_FRESH=0
+      if [ -f "$JOBGPU_CACHE" ]; then
+        age=$(( $(date +%s) - $(stat -f %m "$JOBGPU_CACHE" 2>/dev/null || echo 0) ))
+        [ "$age" -lt "${JOB_GPU_INTERVAL:-30}" ] && JOBGPU_FRESH=1
+      fi
+      JOB_REMOTE="${JOB_REMOTE//__TMO__/$TMO}"
+      [ "$JOBGPU_FRESH" = "1" ] && JOB_REMOTE="${JOB_REMOTE//__JOBGPU_ON__/false}" || JOB_REMOTE="${JOB_REMOTE//__JOBGPU_ON__/true}"
+      REMOTE="$REMOTE; $JOB_REMOTE"
     fi
-    RAW="$(ssh -o BatchMode=yes -o ConnectTimeout="$SSH_TIMEOUT" "$SSH_HOST" "$REMOTE" 2>&1)"
+    # ControlMaster 复用 ssh 连接，刷新时省去握手（约 1 s → 0.3 s）
+    RAW="$(ssh -o BatchMode=yes -o ConnectTimeout="$SSH_TIMEOUT" \
+      -o ControlMaster=auto -o ControlPath="$CACHE_DIR/ssh-%C" -o ControlPersist=300 \
+      "$SSH_HOST" "$REMOTE" 2>&1)"
     rc=$?
     if [ $rc -ne 0 ]; then
       [ "$UI_LANG" = "zh" ] && ERR="ssh 失败: " || ERR="ssh failed: "
       ERR="$ERR$(printf '%s' "$RAW" | tail -1 | tr -d '"\\')"
       RAW=""
+    elif [ "$SHOW_MY_JOBS" = "1" ]; then
+      if [ "$JOBGPU_FRESH" = "1" ]; then
+        RAW="$RAW"$'\n'"$(cat "$JOBGPU_CACHE" 2>/dev/null)"
+      else
+        printf '%s\n' "$RAW" | sed -n '/^@@JOBGPU$/,$p' | sed '1d' > "$JOBGPU_CACHE"
+      fi
     fi
   fi
 else
   [ "$UI_LANG" = "zh" ] && ERR="VPN 未连接" || ERR="VPN not connected"
 fi
 
-NOW="$(date '+%H:%M:%S')"
+NOW="$(date '+%H:%M:%S')"; EPOCH="$(date +%s)"
 export SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
 # ---------- 解析 + 输出 ----------
@@ -147,7 +183,7 @@ export SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
 printf '%s\n' "$RAW" | awk -v mode="$MODE" -v vpn="$STATE" -v err="$ERR" -v now="$NOW" \
   -v filter="$PARTITIONS" -v gpuonly="$GPU_ONLY" -v me="${USER:-}" \
-  -v cluster="$CLUSTER_NAME" -v shownodes="$SHOW_NODES" -v lang="$UI_LANG" -v models="$GPU_MODELS" -v showjobs="$SHOW_MY_JOBS" '
+  -v cluster="$CLUSTER_NAME" -v shownodes="$SHOW_NODES" -v lang="$UI_LANG" -v models="$GPU_MODELS" -v showjobs="$SHOW_MY_JOBS" -v epoch="$EPOCH" '
 function val(line, key,    i, n, parts) {
   n = split(line, parts, " ")
   for (i = 1; i <= n; i++)
@@ -191,15 +227,25 @@ function i18n() {
     L["cluster"] = "集群"; L["gpufree"] = "GPU 空闲"; L["run"] = "运行"; L["pend"] = "排队"; L["mine"] = "我的"
     L["free"] = "空闲"; L["maxfree"] = "单节点最多空闲"; L["cards"] = "卡"; L["mig"] = "个 MIG 实例"
     L["nodes"] = "节点"; L["idle"] = "空闲"; L["down"] = "不可用"; L["updated"] = "更新于"
-    L["connect"] = "连接 VPN"; L["refresh"] = "刷新"; L["model"] = "型号"; L["mem"] = "内存"; L["myjobs"] = "我的作业"; L["vram"] = "显存"
+    L["connect"] = "连接 VPN"; L["refresh"] = "刷新"; L["model"] = "型号"; L["mem"] = "内存"; L["myjobs"] = "我的作业"; L["vram"] = "显存"; L["unlimited"] = "不限"
   } else {
     L["cluster"] = "Cluster"; L["gpufree"] = "GPU free"; L["run"] = "running"; L["pend"] = "pending"; L["mine"] = "mine"
     L["free"] = "free"; L["maxfree"] = "Max free on one node:"; L["cards"] = "GPUs"; L["mig"] = "MIG instances"
     L["nodes"] = "nodes"; L["idle"] = "idle"; L["down"] = "down"; L["updated"] = "Updated"
-    L["connect"] = "Connect VPN"; L["refresh"] = "Refresh"; L["model"] = "Model"; L["mem"] = "RAM"; L["myjobs"] = "My jobs"; L["vram"] = "VRAM"
+    L["connect"] = "Connect VPN"; L["refresh"] = "Refresh"; L["model"] = "Model"; L["mem"] = "RAM"; L["myjobs"] = "My jobs"; L["vram"] = "VRAM"; L["unlimited"] = "unlimited"
   }
 }
 
+# squeue 时间 "D-HH:MM:SS" / "HH:MM:SS" / "MM:SS" -> 秒；UNLIMITED 等返回 -1
+function secs(t,    d, n, a) {
+  if (t !~ /^[0-9]/) return -1
+  d = 0
+  if (index(t, "-")) { d = substr(t, 1, index(t, "-") - 1) + 0; t = substr(t, index(t, "-") + 1) }
+  n = split(t, a, ":")
+  if (n == 3) return d * 86400 + a[1] * 3600 + a[2] * 60 + a[3]
+  if (n == 2) return d * 86400 + a[1] * 60 + a[2]
+  return d * 86400 + a[1]
+}
 function gb(mb) { return sprintf("%.0f", mb / 1024) }
 
 BEGIN {
@@ -282,7 +328,7 @@ END {
     np = k
   }
   if (mode == "json") {
-    printf "{\"lang\":\"%s\",\"cluster\":\"%s\",\"show_nodes\":%s,", lang, jesc(cluster), (shownodes == "1" ? "true" : "false")
+    printf "{\"epoch\":%d,\"lang\":\"%s\",\"cluster\":\"%s\",\"show_nodes\":%s,", epoch, lang, jesc(cluster), (shownodes == "1" ? "true" : "false")
     printf "\"time\":\"%s\",\"vpn\":\"%s\",\"error\":\"%s\",\"gpu_only\":%s,\"gpu_used\":%d,\"gpu_total\":%d,\"partitions\":[", now, vpn, jesc(err), (gpuonly == "1" ? "true" : "false"), all_ga, all_gt
     for (i = 1; i <= np; i++) {
       p = order[i]
@@ -309,8 +355,8 @@ END {
       printf ",\"my_jobs\":["
       for (i = 1; i <= nj; i++) {
         k = jid[i]
-        printf "%s{\"id\":\"%s\",\"name\":\"%s\",\"partition\":\"%s\",\"elapsed\":\"%s\",\"limit\":\"%s\",\"nodes\":\"%s\",\"gres\":\"%s\",\"gpus\":[", \
-          (i > 1 ? "," : ""), jesc(k), jesc(jname[i]), jesc(jpart[i]), jesc(jel[i]), jesc(jlim[i]), jesc(jnodes[i]), jesc(jgres[i])
+        printf "%s{\"id\":\"%s\",\"name\":\"%s\",\"partition\":\"%s\",\"elapsed\":\"%s\",\"limit\":\"%s\",\"elapsed_s\":%d,\"limit_s\":%d,\"nodes\":\"%s\",\"gres\":\"%s\",\"gpus\":[", \
+          (i > 1 ? "," : ""), jesc(k), jesc(jname[i]), jesc(jpart[i]), jesc(jel[i]), jesc(jlim[i]), secs(jel[i]), secs(jlim[i]), jesc(jnodes[i]), jesc(jgres[i])
         for (m = 1; m <= jgc[k]; m++)
           printf "%s{\"index\":%d,\"name\":\"%s\",\"mem_used\":%d,\"mem_total\":%d,\"util\":%d}", \
             (m > 1 ? "," : ""), jgi[k, m], jesc(jgn[k, m]), jgmu[k, m], jgmt[k, m], jgu[k, m]
@@ -358,7 +404,9 @@ END {
     printf "%s (%d) | font=Menlo-Bold\n", L["myjobs"], nj
     for (i = 1; i <= nj; i++) {
       k = jid[i]
-      printf "%s  %s  %s/%s  %s | font=Menlo size=12\n", k, jname[i], jel[i], jlim[i], jnodes[i]
+      el = jel[i]; es = secs(jel[i]); ls = secs(jlim[i])
+      if (mode == "stream" && es >= 0) el = "@@EL:" es ":" epoch ":" ls "@@"   # 插件按 当前时间-epoch 递增
+      printf "%s  %s  %s/%s  %s | font=Menlo size=12\n", k, jname[i], el, (ls < 0 ? L["unlimited"] : jlim[i]), jnodes[i]
       for (m = 1; m <= jgc[k]; m++)
         printf "  GPU%s  %s %.1f/%.0fG  %d%% | font=Menlo size=12 color=gray\n", jgi[k, m], L["vram"], jgmu[k, m] / 1024, jgmt[k, m] / 1024, jgu[k, m]
     }
@@ -367,4 +415,6 @@ END {
   printf "%s %s | color=gray\n", L["updated"], now
   print L["connect"] " | bash=\"" ENVIRON["SCRIPT_PATH"] "\" param1=--connect terminal=false refresh=true"
   print L["refresh"] " | refresh=true"
-}'
+}' > "$LAST_OUT.tmp"
+mv -f "$LAST_OUT.tmp" "$LAST_OUT"
+cat "$LAST_OUT"

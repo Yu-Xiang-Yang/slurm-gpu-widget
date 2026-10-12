@@ -9,7 +9,7 @@
 ## 功能
 
 - **VPN 检测**：通过 AppleScript 读取指定 Tunnelblick 配置的状态；状态不为 `CONNECTED` 时发起连接，并在 `CONNECT_TIMEOUT` 秒内轮询。
-- **单次 SSH 往返**：`scontrol show node -o` 与 `squeue` 在同一非交互会话（`BatchMode=yes`）中执行，单次刷新耗时约 1 s。
+- **单次 SSH 往返**：`scontrol show node -o` 与 `squeue` 在同一非交互会话（`BatchMode=yes`）中执行，并复用持久 SSH 连接（`ControlMaster`，`ControlPersist=300`），单次刷新耗时约 0.7–1.3 s。
 - **按分区汇总**：GPU 已分配/总数（来源于 `Gres` 与 `AllocTRES`）、CPU 已分配/总数、空闲及不可用节点数、运行及排队作业数、当前用户的作业数。
 - **MIG 识别**：由 MIG 切分 GPU（如 `gpu:2g.20gb:12`）构成的分区带有 `(MIG)` 标注，容量以 MIG 实例数而非物理卡数计。
 - **可配置集群名**（`CLUSTER_NAME`），显示于组件标题与菜单栏。
@@ -17,6 +17,7 @@
 - **当前用户的运行作业**（`SHOW_MY_JOBS=1`）：作业号、作业名、已运行时长/时限、节点，以及该作业所占每张卡的显存占用与利用率。
 - **可选节点列表**（`SHOW_NODES=1`）：在每个分区下列出节点名、状态及单节点 GPU/CPU 占用（SwiftBar 中以子菜单呈现）。
 - **双语界面**（`UI_LANG`）：两种前端均支持中文或英文标签，可显式指定或跟随 macOS 系统语言。
+- **刷新机制**：两种前端的集群数据均每 15 s 刷新一次；作业已运行时长在本地每秒递增（Übersicht 组件定时器、SwiftBar 流式插件），不产生额外的集群查询。采集脚本以锁防止重叠运行，上一次运行未结束时直接返回上一次的结果。
 - **桌面卡片可拖动**：按住 Übersicht 卡片标题即可拖动，位置在刷新后保持不变；双击标题恢复默认位置。
 - 处于 `DOWN`、`DRAIN`、`FAIL`、`MAINT`、`NOT_RESPONDING` 状态的节点不计入可用容量；同属多个分区的节点在全局 GPU 总数中仅计一次。
 
@@ -75,6 +76,7 @@
 | `GPU_DETAIL` | `0` | `1` 在所显示分区的每个 GPU 节点上执行 `nvidia-smi`（由登录节点并行 SSH），逐卡列出型号、显存已用/总量及利用率。 |
 | `GPU_DETAIL_TIMEOUT` | `6` | 单节点 `nvidia-smi` 查询超时（s）。 |
 | `SHOW_MY_JOBS` | `1` | `1` 列出当前用户的运行作业，含已运行时长、时限、节点及逐卡显存/利用率（在作业分配内执行 `nvidia-smi`）。 |
+| `JOB_GPU_INTERVAL` | `30` | 作业级 `nvidia-smi` 查询的最小间隔（s）；间隔内复用缓存，以限制组件创建的作业步数量。 |
 | `UI_LANG` | `auto` | 界面语言：`zh`、`en` 或 `auto`（系统首选语言为中文时显示中文，否则显示英文）。 |
 
 示例：不修改配置文件，临时查看全部分区及节点明细：
@@ -108,7 +110,16 @@ GPU_ONLY=0 SHOW_NODES=1 PARTITIONS=gpu,compute ~/.config/cluster-widget/cluster-
 
 `SHOW_MY_JOBS=1` 时顶层对象另含 `"my_jobs": [{"id", "name", "partition", "elapsed", "limit", "nodes", "gres", "gpus": [{"index", "name", "mem_used", "mem_total", "util"}]}]`。`node_list` 仅在 `SHOW_NODES=1` 时出现；`gpus` 仅在 `GPU_DETAIL=1` 且节点接受查询时非空。内存单位为 MiB；由于不调度内存的集群中 `AllocMem` 恒为 0，主机内存占用按 `RealMemory − FreeMem` 计算。`gpu_max_free_node` 表示单个节点上空闲 GPU（或 MIG 实例）的最大数量，即可立即启动的单节点作业规模上限。
 
-`--swiftbar` 输出 SwiftBar 插件格式；`--connect` 仅触发 Tunnelblick 连接。
+`--swiftbar` 输出 SwiftBar 插件格式；`--swiftbar-stream` 输出相同格式，但作业已运行时长以占位符（`@@EL:<elapsed_s>:<epoch>:<limit_s>@@`）表示，供流式插件每秒替换；`--connect` 仅触发 Tunnelblick 连接。`my_jobs` 中每个作业另含 `elapsed_s` 与 `limit_s`（`UNLIMITED` 记为 −1），顶层 `epoch` 记录采集时刻。
+
+## 刷新间隔
+
+| 组件 | 间隔 | 设置位置 |
+|---|---|---|
+| Übersicht 集群数据 | 15 s | `ubersicht/cluster-queue.widget/index.jsx` 顶部的 `REFRESH_SECONDS` |
+| SwiftBar 集群数据 | 15 s | `swiftbar/cluster.sh` 中的 `REFRESH_SECONDS`（流式插件，文件名中不含间隔） |
+| 作业已运行时长 | 1 s | 本地按 `elapsed_s + (now − epoch)` 计算，上限为 `limit_s` |
+| 作业级 GPU 显存/利用率 | 30 s | 配置文件中的 `JOB_GPU_INTERVAL` |
 
 ## 无集群环境下的测试
 

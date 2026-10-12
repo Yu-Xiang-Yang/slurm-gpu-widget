@@ -9,7 +9,7 @@ A macOS desktop widget and menu-bar plugin that reports the per-partition (queue
 ## Features
 
 - **VPN detection**: the state of a named Tunnelblick configuration is read via AppleScript; when it is not `CONNECTED`, a connection is initiated and polled for up to `CONNECT_TIMEOUT` seconds.
-- **Single SSH round trip**: `scontrol show node -o` and `squeue` are executed in one non-interactive session (`BatchMode=yes`), with a typical refresh time of approximately 1 s.
+- **Single SSH round trip**: `scontrol show node -o` and `squeue` are executed in one non-interactive session (`BatchMode=yes`), reusing a persistent SSH connection (`ControlMaster`, `ControlPersist=300`); a refresh typically takes 0.7–1.3 s.
 - **Per-partition aggregation**: allocated/total GPUs (from `Gres` and `AllocTRES`), allocated/total CPUs, idle and unavailable nodes, running and pending jobs, and the jobs of the current user.
 - **MIG awareness**: partitions backed by MIG-partitioned GPUs (e.g. `gpu:2g.20gb:12`) are labelled, and their capacity is reported in MIG instances rather than physical cards.
 - **Configurable cluster name** (`CLUSTER_NAME`), displayed in the widget title and the menu bar.
@@ -17,6 +17,7 @@ A macOS desktop widget and menu-bar plugin that reports the per-partition (queue
 - **Running jobs of the current user** (`SHOW_MY_JOBS=1`): job ID, name, elapsed time / time limit, nodes, and per-GPU memory usage and utilisation for the GPUs held by each job.
 - **Optional node list** (`SHOW_NODES=1`): node names with state and per-node GPU/CPU usage under each partition (a submenu in SwiftBar).
 - **Bilingual interface** (`UI_LANG`): Chinese or English labels in both front ends, selected explicitly or from the macOS language.
+- **Refresh behaviour**: cluster data is refreshed every 15 s in both front ends; job elapsed times advance every second locally (Übersicht component timer, SwiftBar streamable plugin) without additional cluster queries. Overlapping collector runs are suppressed by a lock, and the previous result is returned instead.
 - **Draggable desktop card**: the Übersicht card can be repositioned by dragging its title; the position persists across refreshes, and a double-click restores the default location.
 - Nodes in `DOWN`, `DRAIN`, `FAIL`, `MAINT` or `NOT_RESPONDING` states are excluded from available capacity; nodes belonging to several partitions are counted once in the global GPU total.
 
@@ -75,6 +76,7 @@ File: `~/.config/cluster-widget/config` (template: [`config.example`](config.exa
 | `GPU_DETAIL` | `0` | `1` runs `nvidia-smi` on every GPU node of the displayed partitions (parallel SSH from the login node) and lists each GPU with model, memory used/total and utilisation. |
 | `GPU_DETAIL_TIMEOUT` | `6` | Per-node timeout (s) for the `nvidia-smi` query. |
 | `SHOW_MY_JOBS` | `1` | `1` lists the user's running jobs with elapsed time, time limit, nodes and per-GPU memory/utilisation (`nvidia-smi` executed inside the job allocation). |
+| `JOB_GPU_INTERVAL` | `30` | Minimum interval (s) between per-job `nvidia-smi` queries; results are cached in between, which bounds the number of job steps created by the widget. |
 | `UI_LANG` | `auto` | Interface language: `zh`, `en`, or `auto` (Chinese when the primary macOS language is Chinese, otherwise English). |
 
 Example: a temporary view of all partitions with node details, independent of the configuration file:
@@ -108,7 +110,16 @@ For large partitions (≈ 100 nodes) `SHOW_NODES=1` should be combined with `PAR
 
 When `SHOW_MY_JOBS=1`, the top-level object additionally contains `"my_jobs": [{"id", "name", "partition", "elapsed", "limit", "nodes", "gres", "gpus": [{"index", "name", "mem_used", "mem_total", "util"}]}]`. `node_list` is present only when `SHOW_NODES=1`; `gpus` is non-empty only when `GPU_DETAIL=1` and the node accepted the query. Memory values are in MiB; host memory usage is computed as `RealMemory − FreeMem`, because `AllocMem` remains 0 on clusters that do not schedule memory. `gpu_max_free_node` denotes the largest number of free GPUs (or MIG instances) on a single node, which bounds the largest single-node job that can start immediately.
 
-`--swiftbar` emits the SwiftBar plugin format, and `--connect` only triggers the Tunnelblick connection.
+`--swiftbar` emits the SwiftBar plugin format; `--swiftbar-stream` emits the same format with job elapsed times encoded as placeholders (`@@EL:<elapsed_s>:<epoch>:<limit_s>@@`) for the streamable plugin; `--connect` only triggers the Tunnelblick connection. Each job in `my_jobs` additionally carries `elapsed_s` and `limit_s` (−1 for `UNLIMITED`), and the top-level `epoch` records the acquisition time.
+
+## Refresh intervals
+
+| Component | Interval | Location of the setting |
+|---|---|---|
+| Übersicht, cluster data | 15 s | `REFRESH_SECONDS` at the top of `ubersicht/cluster-queue.widget/index.jsx` |
+| SwiftBar, cluster data | 15 s | `REFRESH_SECONDS` in `swiftbar/cluster.sh` (streamable plugin, therefore no interval in the file name) |
+| Job elapsed time | 1 s | computed locally as `elapsed_s + (now − epoch)`, capped at `limit_s` |
+| Per-job GPU memory/utilisation | 30 s | `JOB_GPU_INTERVAL` in the configuration file |
 
 ## Testing without a cluster
 
